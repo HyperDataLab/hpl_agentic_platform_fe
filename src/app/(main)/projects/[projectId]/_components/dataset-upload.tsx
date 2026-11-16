@@ -2,15 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
-import { Check, FileSpreadsheet, FileUp, Plug, RotateCw, Upload, X } from "lucide-react";
+import { Check, CloudUpload, FileSpreadsheet, FileUp, HardDrive, Link2, Plug, RotateCw, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAllDataConnections } from "@/hooks/use-data-connections";
 import { useDatasetFileTypes } from "@/hooks/use-dataset-file-types";
+import { useLocalNodesQuery } from "@/hooks/use-local-nodes-query";
 import { adminKeys, projectKeys } from "@/lib/api/query-keys";
 import { type DatasetUploadOutcome, fetchDatasets } from "@/lib/api/services/fetch-datasets";
 import { datasetFileAccept, datasetFileRejection } from "@/lib/dataset-file";
@@ -29,21 +34,47 @@ type QueuedUpload = {
 
 /** The dataset name a file gets: its name without the extension, kept within the 2 to 160 characters allowed. */
 export function datasetNameFor(fileName: string) {
-  const base = fileName.replace(/\.(csv|xlsx)$/i, "").trim();
+  const base = fileName.replace(/\.(csv|xlsx|xls)$/i, "").trim();
   return (base.length >= 2 ? base : `Dataset ${base}`.trim()).slice(0, 160);
 }
+
+const MODES = [
+  { value: "files", label: "Upload files", icon: CloudUpload },
+  { value: "connection", label: "Import from a connection", icon: Link2 },
+  { value: "local", label: "Keep rows on a Local Node", icon: HardDrive },
+] as const;
+type Mode = (typeof MODES)[number]["value"];
+
+/** The mode the URL asks for (`?mode=`); anything else is Upload files. */
+export const modeFrom = (value: string | null): Mode => MODES.find((m) => m.value === value)?.value ?? "files";
 
 /** Drop or pick CSV files: each becomes a dataset named after its file, uploaded one at a time. */
 export function DatasetUpload({
   projectId,
   compact,
   onImport,
+  incomingFiles = [],
+  onIncomingFilesHandled,
 }: {
   projectId: string;
   compact: boolean;
   /** Opens the choice of a saved data connection to import from. */
   onImport: () => void;
+  /** Files dropped anywhere on the page. */
+  incomingFiles?: File[];
+  onIncomingFilesHandled?: () => void;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const mode = modeFrom(params.get("mode"));
+  const setMode = (next: string) => {
+    const query = new URLSearchParams(params.toString());
+    if (next === "files") query.delete("mode");
+    else query.set("mode", next);
+    router.replace(`${pathname}${query.size ? `?${query}` : ""}`, { scroll: false });
+  };
+  const nodes = useLocalNodesQuery(projectId).data?.data ?? [];
   const queryClient = useQueryClient();
   const fileTypes = useDatasetFileTypes(projectId);
   const accept = datasetFileAccept(fileTypes.types);
@@ -123,16 +154,25 @@ export function DatasetUpload({
     })();
   }, [uploads, projectId, queryClient, patch]);
 
-  function add(files: FileList | null) {
-    if (!fileTypes.ready || !files?.length) return;
-    const accepted: QueuedUpload[] = [];
-    for (const file of Array.from(files)) {
-      const reason = datasetFileRejection(file, fileTypes.types);
-      if (reason) toast.error(reason, { description: file.name });
-      else accepted.push({ id: crypto.randomUUID(), file, progress: 0, status: "queued" });
-    }
-    if (accepted.length) setUploads((list) => [...list, ...accepted]);
-  }
+  const add = useCallback(
+    (files: FileList | File[] | null) => {
+      if (!fileTypes.ready || !files?.length) return;
+      const accepted: QueuedUpload[] = [];
+      for (const file of Array.from(files)) {
+        const reason = datasetFileRejection(file, fileTypes.types);
+        if (reason) toast.error(reason, { description: file.name });
+        else accepted.push({ id: crypto.randomUUID(), file, progress: 0, status: "queued" });
+      }
+      if (accepted.length) setUploads((list) => [...list, ...accepted]);
+    },
+    [fileTypes.ready, fileTypes.types],
+  );
+
+  useEffect(() => {
+    if (!incomingFiles.length || !fileTypes.ready) return;
+    add(incomingFiles);
+    onIncomingFilesHandled?.();
+  }, [incomingFiles, fileTypes.ready, add, onIncomingFilesHandled]);
 
   const shownConnections = connections.filter((connection) => connection.kind !== "google").slice(0, 3);
 
@@ -160,64 +200,142 @@ export function DatasetUpload({
           event.target.value = "";
         }}
       />
-      <div className="p-3">
-        <button
-          type="button"
-          disabled={!fileTypes.ready || !fileTypes.types.length}
-          onClick={() => input.current?.click()}
-          onDragEnter={(event) => {
-            if (!event.dataTransfer.types.includes("Files")) return;
-            event.preventDefault();
-            dragDepth.current += 1;
-            setDragging(true);
-          }}
-          onDragOver={(event) => {
-            if (!event.dataTransfer.types.includes("Files")) return;
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "copy";
-          }}
-          onDragLeave={() => {
-            dragDepth.current = Math.max(0, dragDepth.current - 1);
-            if (!dragDepth.current) setDragging(false);
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            dragDepth.current = 0;
-            setDragging(false);
-            add(event.dataTransfer.files);
-          }}
-          className={cn(
-            "flex w-full cursor-pointer items-center rounded-lg border-2 border-dashed text-center outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
-            compact ? "flex-row justify-center gap-3 px-4 py-4" : "flex-col justify-center gap-3 px-6 py-12",
-            dragging ? "border-sky-500 bg-sky-500/5" : "border-border hover:border-foreground/25 hover:bg-muted/40",
-          )}
+      <Tabs value={mode} onValueChange={setMode} className="border-b bg-muted/30 p-2">
+        <TabsList
+          className="flex w-full justify-start overflow-x-auto sm:grid sm:grid-cols-3"
+          aria-label="How to add data"
         >
-          <span
+          {MODES.map(({ value, label, icon: Icon }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="flex-none justify-center gap-2 whitespace-nowrap px-3 sm:flex-1"
+            >
+              <Icon aria-hidden="true" />
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {mode === "connection" && (
+        <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
+          <p className="font-medium text-sm">Import from a saved data connection</p>
+          <p className="max-w-md text-muted-foreground text-xs">
+            Choose a connection, then select the data to import. Each import becomes a dataset version.
+          </p>
+          <Button onClick={onImport}>
+            {shownConnections.length > 0 ? (
+              <span className="-ml-1 flex shrink-0 -space-x-1.5" aria-hidden="true">
+                {shownConnections.map((connection) => (
+                  <span
+                    key={connection.id}
+                    className="grid size-5 place-items-center rounded-full bg-background ring-2 ring-background [&_img]:size-3.5 [&_svg]:size-3.5"
+                  >
+                    <ConnectionLogo kind={connection.kind} />
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <Plug data-icon="inline-start" />
+            )}
+            Choose a connection
+          </Button>
+        </div>
+      )}
+      {mode === "local" && (
+        <div className="flex flex-col gap-3 p-4">
+          <h3 className="font-medium text-sm">Must the rows stay on your computer?</h3>
+          <p className="max-w-3xl text-muted-foreground text-sm">
+            Use the Local Node desktop app instead: choose Sign in with Logos, connect this project (a Project Manager
+            approves a Researcher&apos;s computer in{" "}
+            <Link href={`/projects/${projectId}/settings?tab=local-nodes`} className="underline underline-offset-4">
+              Settings › Local Nodes
+            </Link>
+            ), then register the file. Only its name, size, fingerprint and row count reach the Platform. Analyses run
+            on your computer and only aggregate results that pass its release checks are shared.
+          </p>
+          {nodes.length > 0 ? (
+            <ul className="divide-y rounded-lg border text-sm" aria-label="Local Nodes of this project">
+              {nodes.map((node) => (
+                <li key={node.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+                  <span
+                    className={cn("size-2 rounded-full", node.online ? "bg-emerald-500" : "bg-muted-foreground/40")}
+                  />
+                  <span className="font-medium">{node.name}</span>
+                  <span className="text-muted-foreground text-xs">{node.online ? "Online" : "Offline"}</span>
+                  {node.pending_reviews > 0 && (
+                    <span className="ml-auto text-amber-700 text-xs dark:text-amber-300">
+                      {node.pending_reviews} waiting for your review
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground text-xs">No Local Node is connected to this project yet.</p>
+          )}
+        </div>
+      )}
+      {mode === "files" && (
+        <div className="p-3">
+          <button
+            type="button"
+            disabled={!fileTypes.ready || !fileTypes.types.length}
+            onClick={() => input.current?.click()}
+            onDragEnter={(event) => {
+              if (!event.dataTransfer.types.includes("Files")) return;
+              event.preventDefault();
+              dragDepth.current += 1;
+              setDragging(true);
+            }}
+            onDragOver={(event) => {
+              if (!event.dataTransfer.types.includes("Files")) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }}
+            onDragLeave={() => {
+              dragDepth.current = Math.max(0, dragDepth.current - 1);
+              if (!dragDepth.current) setDragging(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              dragDepth.current = 0;
+              setDragging(false);
+              add(event.dataTransfer.files);
+            }}
             className={cn(
-              "grid shrink-0 place-items-center rounded-full transition-colors",
-              compact ? "size-9" : "size-12",
-              dragging ? "bg-sky-500/15 text-sky-600 dark:text-sky-400" : "bg-muted text-muted-foreground",
+              "flex w-full cursor-pointer items-center rounded-lg border-2 border-dashed text-center outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+              compact ? "flex-row justify-center gap-3 px-4 py-4" : "flex-col justify-center gap-3 px-6 py-12",
+              dragging ? "border-sky-500 bg-sky-500/5" : "border-border hover:border-foreground/25 hover:bg-muted/40",
             )}
           >
-            <FileUp className={compact ? "size-4" : "size-5"} aria-hidden="true" />
-          </span>
-          <span className={cn("flex flex-col gap-0.5", compact && "items-start text-left")}>
-            <span className="font-medium text-sm">
-              {dragging ? (
-                "Drop to upload"
-              ) : (
-                <>
-                  <span className="sm:hidden">Tap to choose dataset files</span>
-                  <span className="hidden sm:inline">Drag dataset files here, or click to browse</span>
-                </>
+            <span
+              className={cn(
+                "grid shrink-0 place-items-center rounded-full transition-colors",
+                compact ? "size-9" : "size-12",
+                dragging ? "bg-sky-500/15 text-sky-600 dark:text-sky-400" : "bg-muted text-muted-foreground",
               )}
+            >
+              <FileUp className={compact ? "size-4" : "size-5"} aria-hidden="true" />
             </span>
-            <span className="text-muted-foreground text-xs">
-              {fileTypes.types.join(" or ")} · up to 50 MiB · existing names follow the project's version/copy policy
+            <span className={cn("flex flex-col gap-0.5", compact && "items-start text-left")}>
+              <span className="font-medium text-sm">
+                {dragging ? (
+                  "Drop to upload"
+                ) : (
+                  <>
+                    <span className="sm:hidden">Tap to choose dataset files</span>
+                    <span className="hidden sm:inline">Drag dataset files here, or click to browse</span>
+                  </>
+                )}
+              </span>
+              <span className="text-muted-foreground text-xs">
+                {fileTypes.types.join(" or ")} · up to 50 MiB · existing names follow the project's version/copy policy
+              </span>
             </span>
-          </span>
-        </button>
-      </div>
+          </button>
+        </div>
+      )}
       {uploads.length > 0 && (
         <ul className="flex flex-col divide-y border-t" aria-label="Uploads">
           {uploads.map((item) => (
@@ -271,33 +389,18 @@ export function DatasetUpload({
           ))}
         </ul>
       )}
-      <div className="flex flex-wrap items-center gap-2 border-t bg-muted/30 px-4 py-3">
-        <Button
-          variant="outline"
-          disabled={!fileTypes.ready || !fileTypes.types.length}
-          onClick={() => input.current?.click()}
-        >
-          <Upload data-icon="inline-start" />
-          Upload files
-        </Button>
-        <Button variant="outline" onClick={onImport}>
-          {shownConnections.length > 0 ? (
-            <span className="-ml-1 flex shrink-0 -space-x-1.5" aria-hidden="true">
-              {shownConnections.map((connection) => (
-                <span
-                  key={connection.id}
-                  className="grid size-5 place-items-center rounded-full bg-background ring-2 ring-background [&_img]:size-3.5 [&_svg]:size-3.5"
-                >
-                  <ConnectionLogo kind={connection.kind} />
-                </span>
-              ))}
-            </span>
-          ) : (
-            <Plug data-icon="inline-start" />
-          )}
-          Import from a connection
-        </Button>
-      </div>
+      {mode === "files" && (
+        <div className="flex flex-wrap items-center gap-2 border-t bg-muted/30 px-4 py-3">
+          <Button
+            variant="outline"
+            disabled={!fileTypes.ready || !fileTypes.types.length}
+            onClick={() => input.current?.click()}
+          >
+            <Upload data-icon="inline-start" />
+            Upload files
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

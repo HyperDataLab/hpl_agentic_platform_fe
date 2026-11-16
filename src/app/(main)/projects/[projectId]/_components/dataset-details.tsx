@@ -6,8 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { cn } from "cn";
-import { Download, History, Pencil, Trash2 } from "lucide-react";
+import { Download, History, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -21,20 +20,35 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { showConnectionError, useAllDataConnections, useDatasetsByConnection } from "@/hooks/use-data-connections";
 import { useDatasetDetailQuery, useUpdateDatasetMutation } from "@/hooks/use-datasets-query";
+import { useLocalNodesQuery } from "@/hooks/use-local-nodes-query";
 import { adminKeys, connectionKeys, projectKeys } from "@/lib/api/query-keys";
 import { fetchDataConnections, isGoogleConnection } from "@/lib/api/services/fetch-data-connections";
-import { type DatasetItem, type DatasetVersionItem, fetchDatasets } from "@/lib/api/services/fetch-datasets";
+import {
+  type DatasetItem,
+  type DatasetVersionItem,
+  fetchDatasets,
+  isLocalVersion,
+} from "@/lib/api/services/fetch-datasets";
 
 import { DatasetConnectionActions, DatasetConnectionSource } from "./data-connections/dataset-connection-source";
 import { timeAgo } from "./dataset-format";
 import { DatasetHistory } from "./dataset-history";
-import { DatasetPreview, UploadVersionButton } from "./dataset-versions";
+import { researchRunHref } from "./dataset-select";
+import { UploadVersionButton } from "./dataset-versions";
+import { DatasetWorkspace } from "./dataset-workspace";
 import { WorkspaceFormDialog } from "./workspace-form-dialog";
 import { DatasetBodySkeleton } from "./workspace-skeletons";
 import { ListState, perform, type WorkspaceProps } from "./workspace-ui";
@@ -96,35 +110,6 @@ function DatasetEditDialog({
   );
 }
 
-function HeaderIcon({
-  label,
-  destructive,
-  onClick,
-  children,
-}: {
-  label: string;
-  destructive?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={label}
-          onClick={onClick}
-          className={cn("text-muted-foreground", destructive ? "hover:text-destructive" : "hover:text-foreground")}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 export function DatasetDetails({
   project,
   canWrite,
@@ -137,6 +122,8 @@ export function DatasetDetails({
   const latest = dataset?.latest_version;
   const router = useRouter();
   const queryClient = useQueryClient();
+  const nodes = useLocalNodesQuery(project.id).data?.data;
+  const nodeName = nodes?.find((node) => node.id === latest?.runner_id)?.name;
   const [viewing, setViewing] = useState<DatasetVersionItem | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -231,12 +218,37 @@ export function DatasetDetails({
               <p className="text-muted-foreground text-sm tabular-nums">
                 {latest ? (
                   <>
-                    v{latest.version_number} · {latest.row_count.toLocaleString("en-US")} rows ·{" "}
-                    {latest.column_names.length} columns
-                    {latest.source_type === "upload" && " · CSV upload"} · updated{" "}
+                    v{latest.version_number} ·{" "}
+                    {isLocalVersion(latest) ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help underline decoration-dotted underline-offset-4">
+                            ~{(Math.floor(latest.row_count / 10) * 10).toLocaleString("en-US")} rows
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Rounded down to 10 by the Local Node</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      `${latest.row_count.toLocaleString("en-US")} rows`
+                    )}{" "}
+                    · {latest.column_names.length} columns
+                    {latest.source_type === "upload" && !isLocalVersion(latest) && " · CSV upload"} · updated{" "}
                     <time dateTime={dataset.updated_at} title={new Date(dataset.updated_at).toLocaleString("en-US")}>
                       {timeAgo(dataset.updated_at)}
                     </time>
+                    {isLocalVersion(latest) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help">
+                            {" · "}Rows stay on the Local Node{nodeName ? ` · ${nodeName}` : ""}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          New versions come from the Local Node, which releases them after processing the data on the
+                          researcher’s computer.
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </>
                 ) : (
                   "No versions yet"
@@ -247,30 +259,22 @@ export function DatasetDetails({
               )}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {canWrite && (
-                <>
-                  <HeaderIcon label="Edit name and description" onClick={() => setEditing(true)}>
-                    <Pencil />
-                  </HeaderIcon>
-                  <HeaderIcon
-                    label="Delete dataset"
-                    destructive
-                    onClick={() => {
-                      // A Google file is listed only while the project has data from it; a database
-                      // keeps its sign-in unless asked.
-                      setRemoveSource(Boolean(lastFromSource && isGoogleConnection(lastFromSource.kind)));
-                      setRemoving(true);
-                    }}
-                  >
-                    <Trash2 />
-                  </HeaderIcon>
-                </>
+              {canWrite && shown && (
+                <div className="flex max-w-64 flex-col gap-1.5">
+                  <Button asChild>
+                    <Link prefetch={false} href={researchRunHref(project.id, dataset.id, shown.id)}>
+                      Use in a research run
+                    </Link>
+                  </Button>
+                  {isLocalVersion(shown) && (
+                    <p className="text-muted-foreground text-xs">
+                      Start a research run with this dataset. Your Local Node will run the Dataset stage on your
+                      computer.
+                    </p>
+                  )}
+                </div>
               )}
-              <Button variant="outline" onClick={() => setHistoryOpen(true)}>
-                <History data-icon="inline-start" />
-                History
-              </Button>
-              {shown && (
+              {shown && !isLocalVersion(shown) && (
                 <Button asChild variant="outline">
                   <a href={fetchDatasets.getVersionDownloadUrl(project.id, dataset.id, shown.id)}>
                     <Download data-icon="inline-start" />
@@ -280,14 +284,48 @@ export function DatasetDetails({
               )}
               <DatasetConnectionActions dataset={dataset} projectId={project.id} canWrite={canWrite} />
               {canWrite && <UploadVersionButton dataset={dataset} projectId={project.id} />}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" aria-label="More actions">
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44">
+                  {canWrite && (
+                    <DropdownMenuItem onSelect={() => setEditing(true)}>
+                      <Pencil /> Rename
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onSelect={() => setHistoryOpen(true)}>
+                    <History /> History
+                  </DropdownMenuItem>
+                  {canWrite && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={() => {
+                          // A Google file is listed only while the project has data from it; a database
+                          // keeps its sign-in unless asked.
+                          setRemoveSource(Boolean(lastFromSource && isGoogleConnection(lastFromSource.kind)));
+                          setRemoving(true);
+                        }}
+                      >
+                        <Trash2 /> Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </header>
           {latest?.source_type === "connection" && <DatasetConnectionSource dataset={dataset} />}
-          <DatasetPreview
+          <DatasetWorkspace
             dataset={dataset}
             projectId={project.id}
             version={shown}
             onShowLatest={() => setViewing(null)}
+            onSelectVersion={(version) => setViewing(version.id === latest?.id ? null : version)}
           />
           <DatasetHistory
             dataset={dataset}

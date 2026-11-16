@@ -6,10 +6,42 @@ import { downloadUrl, projectPath, requestDownload } from "../request";
 import type { FileDownload, ListParams } from "../types";
 import type { ConnectionKind, ConnectionSource } from "./fetch-data-connections";
 
+/** Rounded profile released by a Local Node; withheld statistics remain null. */
+export interface LocalCard {
+  variables: {
+    name: string;
+    type: "numeric" | "string" | "date";
+    measure: "nominal" | "ordinal" | "scale" | "count";
+    kind: "single" | "multi_response" | "free_text" | "identifier";
+    role: "input" | "target" | "both" | "none" | "partition" | "split";
+    summary: {
+      n_valid: number | null;
+      n_missing: number | null;
+      n_distinct: number | null;
+      mean: number | null;
+      sd: number | null;
+    };
+    flags: string[];
+  }[];
+  n_rows: number;
+  split: {
+    method: "random_rows" | "by_unit";
+    unit_column: string | null;
+    seed: number;
+    exploration_fraction: number;
+    n_exploration: number;
+    n_confirmation: number;
+    mask_sha256: string | null;
+  };
+  report: { gaps: string[] };
+  disclosure: "standard" | "strict";
+}
+
 export interface DatasetVersionItem {
   id: string;
   dataset_id: string;
   version_number: number;
+  superseded_by_version?: number | null;
   original_filename: string;
   size_bytes: number;
   sha256: string;
@@ -23,8 +55,18 @@ export interface DatasetVersionItem {
     source: ConnectionSource;
     fetched_at: string;
   } | null;
+  /** `local`: the file stays on a Local Node; only metadata is on the Platform. */
+  storage?: "platform" | "local";
+  disclosure?: "standard" | "strict";
+  runner_id?: string | null;
+  local_card?: LocalCard | null;
   created_by_user_id: string;
   created_at: string;
+}
+
+/** A version whose rows stay on a Local Node: no preview or download exists on the Platform. */
+export function isLocalVersion(version: Pick<DatasetVersionItem, "storage"> | null | undefined): boolean {
+  return version?.storage === "local";
 }
 
 export interface DatasetItem {

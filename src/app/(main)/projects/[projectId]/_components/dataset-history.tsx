@@ -1,17 +1,25 @@
 "use client";
 
+import { useRef } from "react";
+
 import { cn } from "cn";
-import { Download } from "lucide-react";
+import { Cloud, Download, HardDrive, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useInfiniteDatasetVersions } from "@/hooks/use-datasets-query";
-import { type DatasetItem, type DatasetVersionItem, fetchDatasets } from "@/lib/api/services/fetch-datasets";
+import {
+  type DatasetItem,
+  type DatasetVersionItem,
+  fetchDatasets,
+  isLocalVersion,
+} from "@/lib/api/services/fetch-datasets";
 
 import { CONNECTION_PROVIDERS } from "./data-connections/connection-display";
 import { formatSize, timeAgo } from "./dataset-format";
+import { DatasetVersionStatusBadges } from "./dataset-versions";
 import { LoadMore } from "./workspace-ui";
 
 /** What changed from the version before: rows gained or lost, columns added or dropped. */
@@ -33,9 +41,23 @@ function changes(version: DatasetVersionItem, previous?: DatasetVersionItem) {
 
 function source(version: DatasetVersionItem) {
   const origin = version.source_type === "connection" ? version.source : null;
+  if (isLocalVersion(version)) return "Local Node";
+  if (version.source_type === "connection" && !origin) return "Connected source";
   return origin
     ? `Read from ${origin.connection_name} (${CONNECTION_PROVIDERS[origin.connection_kind].label})`
     : `Uploaded ${version.original_filename}`;
+}
+
+function SourceIcon({ version }: { version: DatasetVersionItem }) {
+  const className = "size-3.5 shrink-0";
+  if (isLocalVersion(version)) return <HardDrive aria-hidden="true" className={className} />;
+  if (version.source_type === "connection") return <Cloud aria-hidden="true" className={className} />;
+  return <Upload aria-hidden="true" className={className} />;
+}
+
+function displayRowCount(version: DatasetVersionItem) {
+  if (!isLocalVersion(version)) return version.row_count.toLocaleString("en-US");
+  return `~${(Math.floor(version.row_count / 10) * 10).toLocaleString("en-US")}`;
 }
 
 /** Every saved version, newest first. Picking one shows it in the page's preview. */
@@ -57,10 +79,11 @@ export function DatasetHistory({
   const query = useInfiniteDatasetVersions(projectId, dataset.id, { enabled: open });
   const versions = query.versions;
   const latestId = dataset.latest_version?.id;
+  const nodeButtons = useRef<(HTMLButtonElement | null)[]>([]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 p-0 sm:max-w-md">
+      <SheetContent className="w-full gap-0 p-0 max-sm:inset-0 max-sm:h-dvh max-sm:max-w-none max-sm:rounded-none sm:max-w-md">
         <SheetHeader className="border-b px-5 py-4">
           <SheetTitle>Version history</SheetTitle>
           <SheetDescription>
@@ -104,8 +127,20 @@ export function DatasetHistory({
                     )}
                   >
                     <button
+                      ref={(element) => {
+                        nodeButtons.current[index] = element;
+                      }}
                       type="button"
                       onClick={() => onView(version)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                        event.preventDefault();
+                        const nextIndex = Math.max(
+                          0,
+                          Math.min(versions.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)),
+                        );
+                        nodeButtons.current[nextIndex]?.focus();
+                      }}
                       aria-current={viewing ? "true" : undefined}
                       aria-label={`Show version ${version.version_number} in the preview`}
                       className="absolute inset-0 cursor-pointer rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -121,7 +156,6 @@ export function DatasetHistory({
                     <div className="flex min-w-0 flex-1 flex-col gap-1">
                       <div className="flex items-baseline gap-2">
                         <span className="font-medium font-mono text-sm">v{version.version_number}</span>
-                        {latest && <span className="text-muted-foreground text-xs">Latest</span>}
                         {viewing && !latest && <span className="text-muted-foreground text-xs">In preview</span>}
                         <time
                           dateTime={version.created_at}
@@ -131,11 +165,19 @@ export function DatasetHistory({
                           {timeAgo(version.created_at)}
                         </time>
                       </div>
-                      <p className="truncate text-muted-foreground text-xs" title={source(version)}>
-                        {source(version)}
+                      <DatasetVersionStatusBadges
+                        version={version as DatasetVersionItem & { stale?: boolean }}
+                        latest={latest}
+                      />
+                      <p
+                        className="flex min-w-0 items-center gap-1.5 truncate text-muted-foreground text-xs"
+                        title={source(version)}
+                      >
+                        <SourceIcon version={version} />
+                        <span className="truncate">{source(version)}</span>
                       </p>
                       <p className="text-muted-foreground text-xs tabular-nums">
-                        {version.row_count.toLocaleString("en-US")} rows · {version.column_names.length} columns ·{" "}
+                        {displayRowCount(version)} rows · {version.column_names.length} columns ·{" "}
                         {formatSize(version.size_bytes)}
                       </p>
                       {delta.length > 0 && (
@@ -156,24 +198,26 @@ export function DatasetHistory({
                         </ul>
                       )}
                     </div>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          asChild
-                          variant="ghost"
-                          size="icon-sm"
-                          className="relative z-10 shrink-0 self-start text-muted-foreground hover:text-foreground"
-                        >
-                          <a
-                            href={fetchDatasets.getVersionDownloadUrl(projectId, dataset.id, version.id)}
-                            aria-label={`Download version ${version.version_number}`}
+                    {!isLocalVersion(version) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            asChild
+                            variant="ghost"
+                            size="icon-sm"
+                            className="relative z-10 shrink-0 self-start text-muted-foreground hover:text-foreground"
                           >
-                            <Download />
-                          </a>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Download CSV</TooltipContent>
-                    </Tooltip>
+                            <a
+                              href={fetchDatasets.getVersionDownloadUrl(projectId, dataset.id, version.id)}
+                              aria-label={`Download version ${version.version_number}`}
+                            >
+                              <Download />
+                            </a>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Download CSV</TooltipContent>
+                      </Tooltip>
+                    )}
                   </div>
                 </li>
               );

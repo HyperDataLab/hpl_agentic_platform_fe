@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { cn } from "cn";
 
@@ -20,8 +20,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useApiQuery } from "@/hooks/use-api";
 import { useDatasetAccessRefresh, useProjectAccess } from "@/hooks/use-project-access";
 import { projectKeys } from "@/lib/api/query-keys";
-import { type DatasetVersionItem, fetchDatasets } from "@/lib/api/services/fetch-datasets";
+import { type DatasetPreviewData, type DatasetVersionItem, fetchDatasets } from "@/lib/api/services/fetch-datasets";
 
+import { ColumnKindIcon } from "./column-kind-icon";
+import { inferColumnKind } from "./dataset-preview";
 import { ListState } from "./workspace-ui";
 
 export function DatasetCsvPreview({
@@ -33,6 +35,7 @@ export function DatasetCsvPreview({
   showTrigger = true,
   inline = false,
   note = true,
+  onPreviewData,
 }: {
   projectId: string;
   datasetId: string;
@@ -43,6 +46,7 @@ export function DatasetCsvPreview({
   inline?: boolean;
   /** The line on what the preview leaves out; off when the caller says it elsewhere. */
   note?: boolean;
+  onPreviewData?: (data: DatasetPreviewData | undefined) => void;
 }) {
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen ?? localOpen;
@@ -65,6 +69,9 @@ export function DatasetCsvPreview({
   );
   useDatasetAccessRefresh(projectId, query.error);
   const preview = !query.isError && canRead ? query.data?.data : undefined;
+  useEffect(() => {
+    onPreviewData?.(preview);
+  }, [onPreviewData, preview]);
   const rows = preview ? [preview.columns.slice(0, 50), ...preview.rows] : [];
   if (!canRead) return null;
 
@@ -81,20 +88,23 @@ export function DatasetCsvPreview({
         <DialogScrollArea
           horizontal
           contentLabel="CSV preview table"
-          className={cn(
-            "rounded-lg border border-border",
-            inline ? "max-h-[max(16rem,calc(100dvh-22rem))] sm:max-h-[max(16rem,calc(100dvh-19rem))]" : "max-h-[55dvh]",
-          )}
+          className={cn("max-h-[min(65dvh,36rem)] rounded-lg border border-border", !inline && "max-h-[55dvh]")}
           contentClassName="p-0!"
         >
           <Table>
             <TableHeader className="sticky top-0 bg-muted">
               <TableRow>
-                <TableHead className="w-12">Row</TableHead>
+                <TableHead className="w-12 text-muted-foreground/70">Row</TableHead>
                 {rows[0].map((column, index) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: Column positions are fixed in this immutable preview.
                   <TableHead key={index} className="min-w-36 whitespace-normal break-words">
-                    {column || `Column ${index + 1}`}
+                    <span className="flex items-center gap-1.5">
+                      <ColumnKindIcon
+                        kind={inferColumnKind(rows.slice(1).map((row) => row[index] ?? ""))}
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
+                      <span>{column || `Column ${index + 1}`}</span>
+                    </span>
                   </TableHead>
                 ))}
               </TableRow>

@@ -4,17 +4,61 @@ import { useState } from "react";
 
 import { cn } from "cn";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { useDatasetFileTypes } from "@/hooks/use-dataset-file-types";
 import { useCreateDatasetVersionMutation } from "@/hooks/use-datasets-query";
 import type { DatasetItem, DatasetVersionItem } from "@/lib/api/services/fetch-datasets";
+import { isLocalVersion } from "@/lib/api/services/fetch-datasets";
 
 import { CsvFileInput } from "./csv-file-input";
 import { DatasetCsvPreview } from "./dataset-csv-preview";
 import { timeAgo } from "./dataset-format";
 import { WorkspaceFormDialog } from "./workspace-form-dialog";
 import { ListState, perform, validateDatasetFile } from "./workspace-ui";
+
+export function SupersededVersionBadge({ version }: { version: Pick<DatasetVersionItem, "superseded_by_version"> }) {
+  if (version.superseded_by_version == null) return null;
+  return <Badge variant="outline">Superseded by v{version.superseded_by_version}</Badge>;
+}
+
+export type DatasetVersionStatus = "latest" | "superseded" | "stale";
+
+export function datasetVersionStatuses(
+  version: Pick<DatasetVersionItem, "superseded_by_version"> & { stale?: boolean },
+  latest: boolean,
+): DatasetVersionStatus[] {
+  const statuses: DatasetVersionStatus[] = [];
+  if (latest) statuses.push("latest");
+  else if (version.superseded_by_version != null) statuses.push("superseded");
+  if (version.stale === true) statuses.push("stale");
+  return statuses;
+}
+
+function versionStatusLabel(status: DatasetVersionStatus, version: Pick<DatasetVersionItem, "superseded_by_version">) {
+  if (status === "latest") return "Latest";
+  if (status === "stale") return "Stale evidence";
+  return `Superseded by v${version.superseded_by_version}`;
+}
+
+export function DatasetVersionStatusBadges({
+  version,
+  latest = false,
+}: {
+  version: Pick<DatasetVersionItem, "superseded_by_version"> & { stale?: boolean };
+  latest?: boolean;
+}) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {datasetVersionStatuses(version, latest).map((status) => (
+        <Badge key={status} variant={status === "latest" ? "secondary" : "outline"}>
+          {versionStatusLabel(status, version)}
+        </Badge>
+      ))}
+    </span>
+  );
+}
 
 /** Adds a CSV as the dataset's next version; earlier versions stay as they are. */
 export function UploadVersionButton({ dataset, projectId }: { dataset: DatasetItem; projectId: string }) {
@@ -24,6 +68,8 @@ export function UploadVersionButton({ dataset, projectId }: { dataset: DatasetIt
   const [fileKey, setFileKey] = useState(0);
   const next = (dataset.latest_version?.version_number ?? 0) + 1;
 
+  // New versions of a Local Node dataset come from the Node; the header meta says so.
+  if (isLocalVersion(dataset.latest_version)) return null;
   return (
     <WorkspaceFormDialog
       title="Upload new version"
@@ -81,6 +127,7 @@ export function DatasetPreview({
   if (!version)
     return <ListState pending={false} failed={false} empty title="Dataset versions" retry={() => undefined} />;
   const older = version.id !== dataset.latest_version?.id;
+  const superseded = version.superseded_by_version != null;
   return (
     <section aria-label={`Preview of version ${version.version_number}`} className="flex min-w-0 flex-col gap-2">
       <div
@@ -97,12 +144,18 @@ export function DatasetPreview({
               : ` · first 100 rows and 50 columns of v${version.version_number}`}
           </span>
         </span>
+        <SupersededVersionBadge version={version} />
         {older && (
           <Button variant="outline" size="sm" className="ml-auto h-7" onClick={onShowLatest}>
             Back to latest (v{dataset.latest_version?.version_number})
           </Button>
         )}
       </div>
+      {older && superseded && (
+        <p className="-mt-1 px-3 text-muted-foreground text-xs">
+          Results computed on v{version.version_number} are kept but marked stale.
+        </p>
+      )}
       <DatasetCsvPreview
         key={version.id}
         projectId={projectId}
