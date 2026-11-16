@@ -6,7 +6,6 @@ import {
   Inter,
   JetBrains_Mono,
   Lora,
-  Merriweather,
   Noto_Sans,
   Noto_Serif,
   Nunito_Sans,
@@ -17,6 +16,7 @@ import {
   Roboto,
   Roboto_Slab,
 } from "next/font/google";
+import localFont from "next/font/local";
 
 import { GeistPixelSquare } from "geist/font/pixel";
 
@@ -91,9 +91,12 @@ const robotoSlab = Roboto_Slab({
   variable: "--font-roboto-slab",
 });
 
-const merriweather = Merriweather({
-  subsets: ["latin"],
-  weight: ["400", "700"],
+const merriweather = localFont({
+  src: "./assets/merriweather-latin.woff2",
+  weight: "400 700",
+  style: "normal",
+  display: "swap",
+  adjustFontFallback: "Times New Roman",
   variable: "--font-merriweather",
 });
 
