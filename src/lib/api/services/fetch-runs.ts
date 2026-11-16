@@ -18,6 +18,7 @@ export interface CreateRunRequest {
   references?: CaseReference[];
   domains: string[];
   review_mode: ReviewMode;
+  dataset_version_id?: string;
 }
 
 /** The one source of a run's aim, scope and limits. It is a draft until the PI's charter settles it. */

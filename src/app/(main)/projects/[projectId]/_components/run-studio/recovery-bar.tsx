@@ -3,7 +3,16 @@
 import { type ReactNode, useEffect, useState } from "react";
 
 import { cn } from "cn";
-import { Coins, Hourglass, type LucideIcon, OctagonAlert, OctagonX, RefreshCw, RotateCcw } from "lucide-react";
+import {
+  Coins,
+  Hourglass,
+  type LucideIcon,
+  OctagonAlert,
+  OctagonX,
+  RefreshCw,
+  RotateCcw,
+  TriangleAlert,
+} from "lucide-react";
 import { motion } from "motion/react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -200,6 +209,7 @@ export function RecoveryBar({ session }: { session: RunSession }) {
 
   if (!session.pipeline || !run || state.gate) return null;
   const canWrite = Boolean(access?.canWrite);
+  const capability = state.failureCode === "LOCAL_NODE_CAPABILITY";
   // Only a run that still holds the project can be abandoned: one in progress, or stopped on its budget.
   const holds = isActiveRun(run.status) || run.status === RunStatus.BudgetExceeded;
   const abandon = access?.canManage && holds ? <AbandonRun run={run} label={label} /> : null;
@@ -230,7 +240,12 @@ export function RecoveryBar({ session }: { session: RunSession }) {
 
   if (recovery?.state === "needs_you" && recovery.action === "rerun" && run.current_stage)
     return (
-      <Bar icon={OctagonAlert} tone="rose" title="The stage stopped" text={recovery.reason}>
+      <Bar
+        icon={capability ? TriangleAlert : OctagonAlert}
+        tone={capability ? "amber" : "rose"}
+        title={capability ? "Update the Local Node" : "The stage stopped"}
+        text={capability ? (state.failure ?? recovery.reason) : recovery.reason}
+      >
         {abandon}
         {canWrite && (
           <>

@@ -51,6 +51,42 @@ const appended = (base: PipelineEnvelope, type: string, payload: Record<string, 
 });
 
 describe("PipelineAdapter", () => {
+  it("maps dataset.superseded at startup and during an active run", () => {
+    for (const history of [[], envelopes.slice(0, 10)]) {
+      const adapter = new PipelineAdapter(info);
+      const events = convert(history, adapter);
+      const warning = appended(envelopes[0], "dataset.superseded", {
+        dataset_superseded: true,
+        superseded_by_version: 3,
+      });
+      const mapped = adapter.convert(warning);
+      expect(mapped.filter((e) => e.type === "dataset.superseded")).toMatchObject([
+        { payload: { dataset_superseded: true, superseded_by_version: 3 } },
+      ]);
+      expect(adapter.convert(warning)).toEqual([]);
+      const state = replayRunEvents("run-1", [...events, ...mapped]);
+      expect(state.dataset_superseded).toBe(true);
+      expect(state.superseded_by_version).toBe(3);
+      expect(state.lifecycle).toBe("running");
+    }
+    expect(replayRunEvents("run-1", convert([envelopes[0]])).dataset_superseded).toBeUndefined();
+  });
+
+  it("keeps the warning without a valid version and ignores unconfirmed supersession", () => {
+    for (const version of [undefined, null, "3", 0, -1, 1.5]) {
+      const events = convert([
+        appended(envelopes[0], "dataset.superseded", { dataset_superseded: true, superseded_by_version: version }),
+      ]);
+      const state = replayRunEvents("run-1", events);
+      expect(state.dataset_superseded).toBe(true);
+      expect(state.superseded_by_version).toBeUndefined();
+    }
+    for (const flag of [undefined, false, "true"]) {
+      const events = convert([appended(envelopes[0], "dataset.superseded", { dataset_superseded: flag })]);
+      expect(replayRunEvents("run-1", events).dataset_superseded).toBeUndefined();
+    }
+  });
+
   it("rebuilds every screen of the run, one per round of hypotheses", () => {
     const state = replayRunEvents("run-1", convert(envelopes));
     expect(state.plan.map((s) => [s.key, s.round, s.round_kind])).toEqual([
@@ -441,6 +477,61 @@ describe("PipelineAdapter", () => {
     const state = replayRunEvents("run-1", convert(list));
     expect(state.lifecycle).toBe("failed");
     expect(state.failure).toBe("The model failed.");
+    expect(state.failureCode).toBe("LLM_ERROR");
+  });
+
+  it("preserves the Local Node pause reason and auto-resume", () => {
+    const adapter = new PipelineAdapter(info);
+    const base = envelopes[39];
+    const paused = convert(
+      [
+        ...envelopes.slice(0, 40),
+        appended(base, "run.phase_changed", { from: "running", reason: "runner_offline" }, { phase: "paused" }),
+      ],
+      adapter,
+    );
+    expect(replayRunEvents("run-1", paused)).toMatchObject({ lifecycle: "paused", pauseReason: "runner_offline" });
+    const resumed = adapter.convert(appended(base, "run.phase_changed", { from: "paused" }, { phase: "running" }));
+    const state = replayRunEvents("run-1", [...paused, ...resumed]);
+    expect(state.lifecycle).toBe("running");
+    expect(state.pauseReason).toBeUndefined();
+  });
+
+  it.each(["text", "message", "summary"])("keeps release review from %s as ordinary narration", (field) => {
+    const waiting = "Waiting for release review on the Local Node.";
+    const state = replayRunEvents(
+      "run-1",
+      convert([
+        ...envelopes.slice(0, 40),
+        appended(
+          envelopes[39],
+          "hypothesis.progress",
+          {
+            kind: "release_review",
+            ...(field !== "summary" ? { [field]: waiting } : {}),
+          },
+          field === "summary" ? { summary: waiting } : {},
+        ),
+      ]),
+    );
+    expect(state.message?.text).toBe("Waiting for release review on the Local Node.");
+    expect(state.lifecycle).toBe("running");
+    expect(state.gate).toBeNull();
+  });
+
+  it("preserves the capability code and the step's message", () => {
+    const state = replayRunEvents(
+      "run-1",
+      convert([
+        ...envelopes.slice(0, 40),
+        appended(envelopes[39], "run.failed", {
+          code: "LOCAL_NODE_CAPABILITY",
+          message: "The Node cannot compute table_quality.",
+        }),
+      ]),
+    );
+    expect(state.failureCode).toBe("LOCAL_NODE_CAPABILITY");
+    expect(state.failure).toBe("The Node cannot compute table_quality.");
   });
 
   it("ignores an envelope the stream sends again", () => {

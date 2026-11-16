@@ -2,6 +2,8 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ArrowRight, ChevronRight, CircleCheck, CircleX, Flag, Lock, PenLine, Play } from "lucide-react";
@@ -15,11 +17,11 @@ import { useInfiniteRuns } from "@/hooks/use-runs-query";
 import { projectKeys } from "@/lib/api/query-keys";
 import { type RunItem, runTitle } from "@/lib/api/services/fetch-runs";
 import type { GateKind, IntentKind, ReviewMode, RunInput } from "@/lib/run-stream/contract";
-import { SHOW_DATA_STAGE, SHOW_REVIEW_MODE, SHOW_WRITING_PREVIEW } from "@/lib/run-stream/features";
-import { DATASET } from "@/lib/run-stream/mock/scenario";
+import { SHOW_REVIEW_MODE, SHOW_WRITING_PREVIEW } from "@/lib/run-stream/features";
 import { type RunSession, useProjectRun, useRunStudio } from "@/lib/run-stream/run-store";
 import { displayStatus, finalResults, GATE_TITLE, inSentence, nextStop, signed } from "@/lib/run-stream/selectors";
 
+import { DatasetVersionSelect } from "../dataset-select";
 import { ListState, LoadMore } from "../workspace-ui";
 import { AgentAvatar, StatusPill } from "./run-bits";
 import {
@@ -46,16 +48,27 @@ function SectionTitle({ title, aside }: { title: string; aside?: string }) {
   );
 }
 
-/** Your own data, once runs can take it. Until then a run starts from the question alone and nothing is shown. */
-function DataField() {
-  if (!SHOW_DATA_STAGE) return null;
+/** Optional project data included in the research run. */
+function DataField({
+  projectId,
+  value,
+  preloadDatasetId,
+  onChange,
+}: {
+  projectId: string;
+  value: string;
+  preloadDatasetId?: string;
+  onChange(value: string): void;
+}) {
   return (
     <Field>
       <FieldTitle>Data</FieldTitle>
-      <p className="text-sm">
-        {DATASET.name} · v1{" "}
-        <span className="text-muted-foreground text-xs">· 1,240 rows, checked by the Steward first</span>
-      </p>
+      <DatasetVersionSelect
+        projectId={projectId}
+        value={value}
+        preloadDatasetId={preloadDatasetId}
+        onChange={onChange}
+      />
     </Field>
   );
 }
@@ -65,13 +78,21 @@ function TopicComposer({
   mode,
   onModeChange,
   canWrite,
+  projectId,
+  datasetVersionId,
+  preloadDatasetId,
+  onDatasetVersionChange,
   onStart,
 }: {
   mode: ReviewMode;
   onModeChange(mode: ReviewMode): void;
   canWrite: boolean;
+  projectId: string;
+  datasetVersionId: string;
+  preloadDatasetId?: string;
+  onDatasetVersionChange(value: string): void;
   /** Settles once the run has started or was refused. */
-  onStart(mode: ReviewMode, input: RunInput, from: HTMLElement | null): Promise<void>;
+  onStart(mode: ReviewMode, input: RunInput, from: HTMLElement | null, datasetVersionId?: string): Promise<void>;
 }) {
   const draft = useTopicDraft("composer");
   const button = useRef<HTMLButtonElement>(null);
@@ -82,7 +103,7 @@ function TopicComposer({
     if (!input) return;
     setStarting(true);
     try {
-      await onStart(mode, input, button.current);
+      await onStart(mode, input, button.current, datasetVersionId || undefined);
     } finally {
       setStarting(false);
     }
@@ -121,7 +142,12 @@ function TopicComposer({
             labelClassName="font-(family-name:--font-lora) font-normal text-[22px] leading-snug"
           />
           <IntentInput draft={draft} />
-          <DataField />
+          <DataField
+            projectId={projectId}
+            value={datasetVersionId}
+            preloadDatasetId={preloadDatasetId}
+            onChange={onDatasetVersionChange}
+          />
           <CaseDetailsInput draft={draft} />
         </div>
         <RunPath stops={stops} className="max-xl:hidden">
@@ -503,9 +529,14 @@ export function RunStudio({ projectId, canWrite }: { projectId: string; canWrite
   const session = useProjectRun(projectId);
   const startRun = useRunStudio((s) => s.startRun);
   const openWorkspace = useRunStudio((s) => s.openWorkspace);
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState(false);
   const [mode, setMode] = useState<ReviewMode>("light");
+  const [datasetVersionId, setDatasetVersionId] = useState(searchParams.get("dataset_version_id") ?? "");
+  const [datasetId, setDatasetId] = useState(searchParams.get("dataset_id") ?? "");
   const from = useRef<HTMLElement | null>(null);
   const finished = Boolean(session && (session.state.completed || session.state.lifecycle === "failed"));
   const canStart = canWrite && (!session || finished);
@@ -518,10 +549,24 @@ export function RunStudio({ projectId, canWrite }: { projectId: string; canWrite
     else document.getElementById("composer-topic")?.focus();
   }, [canStart, hasSession]);
 
+  useEffect(() => {
+    const selected = searchParams.get("dataset_version_id");
+    const selectedDataset = searchParams.get("dataset_id");
+    if (!selected && !selectedDataset) return;
+    if (selected) setDatasetVersionId(selected);
+    if (selectedDataset) setDatasetId(selectedDataset);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("dataset_version_id");
+    params.delete("dataset_id");
+    router.replace(`${pathname}${params.size ? `?${params}` : ""}#start-run`, { scroll: false });
+  }, [pathname, router, searchParams]);
+
   // The dialog stays open until the run has started, so a refused start can be fixed and tried again.
-  const start = async (chosen: ReviewMode, input: RunInput) => {
-    const runId = await startRun(projectId, chosen, input);
+  const start = async (chosen: ReviewMode, input: RunInput, selectedDatasetVersionId?: string) => {
+    const runId = await startRun(projectId, chosen, input, selectedDatasetVersionId);
     if (!runId) return;
+    setDatasetVersionId("");
+    setDatasetId("");
     setDialog(false);
     void queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
     void queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
@@ -555,16 +600,29 @@ export function RunStudio({ projectId, canWrite }: { projectId: string; canWrite
           mode={mode}
           onModeChange={setMode}
           canWrite={canWrite}
-          onStart={async (chosen, input, el) => {
+          projectId={projectId}
+          datasetVersionId={datasetVersionId}
+          preloadDatasetId={datasetId || undefined}
+          onDatasetVersionChange={setDatasetVersionId}
+          onStart={async (chosen, input, el, selectedDatasetVersionId) => {
             from.current = el;
-            await start(chosen, input);
+            await start(chosen, input, selectedDatasetVersionId);
           }}
         />
       )}
       {!session && <RunStats />}
       {SHOW_WRITING_PREVIEW && <WritingPreviewRow />}
       <PastRuns projectId={projectId} hide={session?.runId} />
-      <StartRunDialog open={dialog} onOpenChange={setDialog} defaultMode={mode} onStart={start} />
+      <StartRunDialog
+        open={dialog}
+        onOpenChange={setDialog}
+        defaultMode={mode}
+        projectId={projectId}
+        datasetVersionId={datasetVersionId}
+        preloadDatasetId={datasetId || undefined}
+        onDatasetVersionChange={setDatasetVersionId}
+        onStart={start}
+      />
     </div>
   );
 }

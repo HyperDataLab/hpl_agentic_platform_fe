@@ -792,11 +792,22 @@ export type RunEvent =
    * `topic` is what the person typed; `domains` are the fields they kept. Sub-questions are derived in `scope`.
    * `dataset` is absent for a run that starts from the topic alone.
    */
-  | EventBase<"run.started", { mode: ReviewMode; topic: string; domains: string[]; dataset?: DatasetRef }>
-  | EventBase<"run.plan", { stages: PlannedStage[] }>
+  | EventBase<
+      "run.started",
+      { mode: ReviewMode; topic: string; domains: string[]; dataset?: DatasetRef; dataset_superseded?: true }
+    >
+  | EventBase<"run.plan", { stages: PlannedStage[]; dataset_superseded?: true }>
+  | EventBase<"dataset.superseded", { dataset_superseded: true; superseded_by_version?: number }>
   | EventBase<
       "run.status",
-      { status: RunLifecycle; reason?: string /** Stopped by a person, not failed. */; stopped?: boolean }
+      {
+        status: RunLifecycle;
+        reason?: string;
+        /** The engine's failure code, preserved by the FE adapter. */
+        code?: string;
+        /** Stopped by a person, not failed. */
+        stopped?: boolean;
+      }
     >
   /** Nothing has come from the engine of the open stage for a while. */
   | EventBase<"run.stalled", { minutes: number }>

@@ -13,6 +13,7 @@ import type { AgentRole } from "@/lib/run-stream/contract";
 import type { RunState } from "@/lib/run-stream/run-state";
 import { GATE_TITLE, inSentence, nextStop } from "@/lib/run-stream/selectors";
 
+import { ReleaseReviewIcon, RunFailureMessage } from "./local-node-status";
 import { AgentAvatar, Caret, TypedLine, WorkOrb } from "./run-bits";
 import { AGENTS, RULE_IDS, RULES, TEAM } from "./run-meta";
 
@@ -145,9 +146,11 @@ export function NowCard({
     return (
       <div className="flex flex-col gap-2 rounded-xl bg-card p-3.5 ring-1 ring-foreground/10">
         <span className="text-muted-foreground text-xs">Stopped</span>
-        <h3 className="font-semibold text-[15px]">The run stopped</h3>
+        <h3 className="font-semibold text-[15px]">
+          {state.failureCode === "LOCAL_NODE_CAPABILITY" ? "Local Node update needed" : "The run stopped"}
+        </h3>
         <p className="text-muted-foreground text-sm">
-          {state.failure ?? "Popper could not finish this run."} Use the stages above to look back at what was done.
+          <RunFailureMessage message={state.failure} code={state.failureCode} />
         </p>
       </div>
     );
@@ -187,6 +190,7 @@ export function NowCard({
           <p className="mt-1 min-h-5 text-sm leading-relaxed">
             {message ? (
               <>
+                <ReleaseReviewIcon text={message.text} />
                 <TypedLine text={message.text} typing={typing} />
                 {!message.done && <Caret />}
               </>

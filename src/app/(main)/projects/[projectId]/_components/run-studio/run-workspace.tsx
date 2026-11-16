@@ -26,6 +26,7 @@ import { displayStatus, liveStageKey } from "@/lib/run-stream/selectors";
 
 import { perform } from "../workspace-ui";
 import { DropBar, GateSheet } from "./gate-sheet";
+import { LocalNodeWaitBanner, SupersededDatasetBanner } from "./local-node-status";
 import { RecoveryBar } from "./recovery-bar";
 import { NowCard, RunAside } from "./run-aside";
 import { FlightLayer, PulseDot, StatusPill } from "./run-bits";
@@ -299,6 +300,8 @@ function RunWorkspace({ session }: { session: RunSession }) {
             setViewKey(key === live || key === followed ? null : key);
           }}
         />
+        <LocalNodeWaitBanner state={state} />
+        <SupersededDatasetBanner state={state} />
         <AnimatePresence initial={false}>
           <RecoveryBar session={session} />
         </AnimatePresence>

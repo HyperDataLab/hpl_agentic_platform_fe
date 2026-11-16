@@ -1,7 +1,7 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 
-import { fetchRuns, type RunItem, runProblem, runTitle } from "@/lib/api/services/fetch-runs";
+import { type CreateRunRequest, fetchRuns, type RunItem, runProblem, runTitle } from "@/lib/api/services/fetch-runs";
 import { isActiveRun } from "@/lib/research-workspace";
 import { ApiError } from "@/types/api";
 import { RunStatus } from "@/types/enums";
@@ -34,7 +34,7 @@ interface RunStudioState {
   openRunId: string | null;
   openFrom: DOMRect | null;
   /** Starts a run and makes it the project's run. Resolves to the run to open, or null when none started. */
-  startRun(projectId: string, mode: ReviewMode, input: RunInput): Promise<string | null>;
+  startRun(projectId: string, mode: ReviewMode, input: RunInput, datasetVersionId?: string): Promise<string | null>;
   /** Shows a run from the backend. `active` makes it the project's run; otherwise it can only be opened. */
   attachRun(projectId: string, run: RunItem, active: boolean): void;
   /** Resolves to false when the answer was not recorded. */
@@ -53,6 +53,19 @@ export interface Stream extends RunCommands {
 }
 
 const labelOf = (runId: string) => `RUN-${runId.slice(0, 4).toUpperCase()}`;
+
+export function createRunRequest(mode: ReviewMode, input: RunInput, datasetVersionId?: string): CreateRunRequest {
+  return {
+    problem: input.problem,
+    intent: input.intent,
+    context: input.context,
+    constraints: input.constraints,
+    references: input.references,
+    domains: input.domains,
+    review_mode: mode === "auto" ? "auto" : "light",
+    ...(datasetVersionId ? { dataset_version_id: datasetVersionId } : {}),
+  };
+}
 
 // Live streams sit outside React state; only the folded state goes into the store.
 const streams = new Map<string, Stream>();
@@ -118,18 +131,9 @@ export const useRunStudio = create<RunStudioState>()((set, get) => {
     activeRun: {},
     openRunId: null,
     openFrom: null,
-    async startRun(projectId, mode, input) {
+    async startRun(projectId, mode, input, datasetVersionId) {
       try {
-        const { data: run } = await fetchRuns.create(projectId, {
-          problem: input.problem,
-          intent: input.intent,
-          context: input.context,
-          constraints: input.constraints,
-          references: input.references,
-          domains: input.domains,
-          // The Platform stops at its gates in `light` and at none in `auto`.
-          review_mode: mode === "auto" ? "auto" : "light",
-        });
+        const { data: run } = await fetchRuns.create(projectId, createRunRequest(mode, input, datasetVersionId));
         get().attachRun(projectId, run, true);
         return run.id;
       } catch (error) {

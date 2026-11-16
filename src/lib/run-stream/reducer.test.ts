@@ -28,6 +28,77 @@ const dataPlan = {
 };
 
 describe("applyRunEvent", () => {
+  it("replays supersession without changing the run lifecycle or losing the warning in later history", () => {
+    const started = event("run.started", { mode: "auto", topic: "Q", domains: [] });
+    const paused = event("run.status", { status: "paused", reason: "runner_offline" });
+    const warning = event("dataset.superseded", { dataset_superseded: true, superseded_by_version: 3 });
+    const state = replayRunEvents("run-1", [started, paused, warning]);
+    expect(state.dataset_superseded).toBe(true);
+    expect(state.superseded_by_version).toBe(3);
+    expect(state.lifecycle).toBe("paused");
+    expect(state.pauseReason).toBe("runner_offline");
+    expect(applyRunEvent(state, warning)).toBe(state);
+
+    const completed = replayRunEvents("run-1", [
+      started,
+      paused,
+      warning,
+      event("run.plan", { stages: [] }),
+      event("dataset.superseded", { dataset_superseded: true }),
+      event("run.completed", {}),
+    ]);
+    expect(completed.dataset_superseded).toBe(true);
+    expect(completed.superseded_by_version).toBe(3);
+    expect(completed.lifecycle).toBe("completed");
+  });
+
+  it("keeps dataset supersession warnings from run start and plan throughout history", () => {
+    for (const first of [
+      event("run.started", { mode: "auto", topic: "Q", domains: [], dataset_superseded: true }),
+      event("run.plan", { stages: [], dataset_superseded: true }),
+    ]) {
+      let state = applyRunEvent(initialRunState("run-1"), first);
+      expect(state.dataset_superseded).toBe(true);
+      state = applyRunEvent(state, event("run.plan", { stages: [] }));
+      state = applyRunEvent(state, event("run.completed", {}));
+      expect(state.dataset_superseded).toBe(true);
+      expect(state.lifecycle).toBe("completed");
+    }
+    const state = applyRunEvent(
+      initialRunState("run-1"),
+      event("run.started", { mode: "auto", topic: "Q", domains: [] }),
+    );
+    expect(state.dataset_superseded).toBeUndefined();
+  });
+
+  it("keeps the pause reason until the Local Node reconnects", () => {
+    const paused = applyRunEvent(
+      initialRunState("run-1"),
+      event("run.status", { status: "paused", reason: "runner_offline" }),
+    );
+    expect(paused.pauseReason).toBe("runner_offline");
+    const resumed = applyRunEvent(paused, event("run.status", { status: "running" }));
+    expect(resumed.lifecycle).toBe("running");
+    expect(resumed.pauseReason).toBeUndefined();
+  });
+
+  it("keeps capability failure codes and clears them on recovery or a different failure", () => {
+    const failed = applyRunEvent(
+      initialRunState("run-1"),
+      event("run.status", {
+        status: "failed",
+        reason: "The Node cannot compute table_quality.",
+        code: "LOCAL_NODE_CAPABILITY",
+      }),
+    );
+    expect(failed.failureCode).toBe("LOCAL_NODE_CAPABILITY");
+    expect(failed.failure).toBe("The Node cannot compute table_quality.");
+    expect(applyRunEvent(failed, event("run.status", { status: "running" })).failureCode).toBeUndefined();
+    expect(
+      applyRunEvent(failed, event("run.status", { status: "failed", reason: "Another failure." })).failureCode,
+    ).toBeUndefined();
+  });
+
   afterEach(() => {
     seq = 0;
   });

@@ -50,22 +50,35 @@ export function applyRunEvent(previous: RunState, event: RunEvent): RunState {
         state.topic = event.payload.topic;
         state.domains = event.payload.domains;
         state.dataset = event.payload.dataset;
+        if (event.payload.dataset_superseded === true) state.dataset_superseded = true;
         state.startedAt = event.ts;
         state.lifecycle = "running";
+        delete state.pauseReason;
+        delete state.failureCode;
         break;
       case "run.plan":
         state.plan = event.payload.stages;
+        if (event.payload.dataset_superseded === true) state.dataset_superseded = true;
+        break;
+      case "dataset.superseded":
+        state.dataset_superseded = true;
+        if (event.payload.superseded_by_version !== undefined)
+          state.superseded_by_version = event.payload.superseded_by_version;
         break;
       case "run.status":
         state.lifecycle = event.payload.status;
+        if (event.payload.status === "paused") state.pauseReason = event.payload.reason;
+        else delete state.pauseReason;
         if (event.payload.status === "failed") {
           state.failure = event.payload.reason;
+          state.failureCode = event.payload.code;
           if (event.payload.stopped) state.stopped = true;
           else delete state.stopped;
           // A run that ended has nothing left to answer.
           state.gate = null;
         } else {
           delete state.failure;
+          delete state.failureCode;
           delete state.stopped;
         }
         break;
@@ -75,6 +88,8 @@ export function applyRunEvent(previous: RunState, event: RunEvent): RunState {
       case "run.completed":
         state.completed = true;
         state.lifecycle = "completed";
+        delete state.pauseReason;
+        delete state.failureCode;
         state.paperTitle = event.payload.paper_title;
         // Only a run that ends with a paper has the paper screen to land on.
         if (event.payload.paper_title) state.currentStageKey = "done";

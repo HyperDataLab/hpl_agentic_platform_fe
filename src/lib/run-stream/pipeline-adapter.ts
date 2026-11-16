@@ -784,6 +784,18 @@ export class PipelineAdapter {
       this.emit("run.started", { mode: this.run.mode, topic: this.run.topic, domains: this.run.domains });
       this.emit("run.plan", { stages: this.screens().map(planned) });
     }
+    if (envelope.type === "dataset.superseded") {
+      if (envelope.payload.dataset_superseded === true) {
+        const version = envelope.payload.superseded_by_version;
+        this.emit("dataset.superseded", {
+          dataset_superseded: true,
+          ...(typeof version === "number" && Number.isInteger(version) && version > 0
+            ? { superseded_by_version: version }
+            : {}),
+        });
+      }
+      return this.out;
+    }
     if (this.sent && (envelope.phase === "revising" || envelope.step_key === "critique")) this.revise();
     const base = envelope.step_key ? SCREEN_OF[envelope.step_key] : undefined;
     if (base && envelope.type !== "decision.recorded") this.goTo(this.keyOf(base));
@@ -975,6 +987,11 @@ export class PipelineAdapter {
   }
 
   private progress(payload: Record<string, unknown>) {
+    const waiting = "Waiting for release review on the Local Node.";
+    if (payload.text === waiting || payload.message === waiting || this.at?.summary === waiting) {
+      this.say(waiting);
+      return;
+    }
     const kind = String(payload.kind ?? "");
     if (kind === "started") {
       // A set being rewritten announces its own round once the old one is withdrawn.
@@ -1056,7 +1073,7 @@ export class PipelineAdapter {
             "reviewer",
           );
         }
-        if (phase === "paused") this.emit("run.status", { status: "paused" });
+        if (phase === "paused") this.emit("run.status", { status: "paused", reason: payload.reason });
         else if (payload.from === "paused") this.emit("run.status", { status: "running" });
         break;
       case "run.published": {
@@ -1074,7 +1091,11 @@ export class PipelineAdapter {
         this.stageStatus(String(payload.status ?? ""), payload.reason);
         break;
       case "run.failed":
-        this.fail(String(payload.message || "The engine could not finish this run."));
+        this.fail(
+          String(payload.message || "The engine could not finish this run."),
+          false,
+          typeof payload.code === "string" ? payload.code : undefined,
+        );
         break;
       case "run.cancelled":
         this.fail("The run was cancelled.");
@@ -1300,11 +1321,11 @@ export class PipelineAdapter {
       );
   }
 
-  private fail(reason: string, stopped = false) {
+  private fail(reason: string, stopped = false, code?: string) {
     if (this.failed) return;
     this.failed = true;
     this.gate = null;
-    this.emit("run.status", { status: "failed", reason, ...(stopped ? { stopped } : {}) });
+    this.emit("run.status", { status: "failed", reason, ...(code ? { code } : {}), ...(stopped ? { stopped } : {}) });
   }
 
   /** A stage that failed or was stopped starts again (a rerun, by hand or by itself): the run goes on. */

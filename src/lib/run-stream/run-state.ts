@@ -294,11 +294,15 @@ export interface RunState {
   runId: string;
   lastSeq: number;
   lifecycle: RunLifecycle;
+  /** Why the run is paused; cleared when it continues. */
+  pauseReason?: string;
   mode: ReviewMode;
   /** The topic the person typed when starting the run. */
   topic: string;
   domains: string[];
   dataset?: DatasetRef;
+  dataset_superseded?: true;
+  superseded_by_version?: number;
   startedAt?: string;
   plan: PlannedStage[];
   stages: Record<string, StageState>;
@@ -319,6 +323,7 @@ export interface RunState {
   paperTitle?: string;
   /** Why the run stopped, once it failed. */
   failure?: string;
+  failureCode?: string;
   /** The run ended because a person stopped it. */
   stopped?: boolean;
   /** The engine has been quiet this long, in minutes; cleared by the next thing it does. */

@@ -33,19 +33,14 @@ import {
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { GateKind, IntentKind, ReviewMode, RunInput } from "@/lib/run-stream/contract";
-import { SHOW_DATA_STAGE, SHOW_REVIEW_MODE } from "@/lib/run-stream/features";
-import { DATASET } from "@/lib/run-stream/mock/scenario";
+import { SHOW_REVIEW_MODE } from "@/lib/run-stream/features";
 
+import { DatasetVersionSelect } from "../dataset-select";
 import { MODES, PIPELINE, RUN_MODES, STAGE_SHORT, STOP_INFO, stopsFor } from "./run-meta";
 
-const STEPS = [
-  "Your question",
-  ...(SHOW_DATA_STAGE ? ["Data"] : []),
-  ...(SHOW_REVIEW_MODE ? ["Your involvement"] : []),
-];
+const STEPS = ["Your question", "Data", ...(SHOW_REVIEW_MODE ? ["Your involvement"] : [])];
 
 /** Fields suggested from the words of the topic. The person keeps, removes or adds to them. */
 const FIELD_HINTS: [RegExp, string][] = [
@@ -556,13 +551,21 @@ export function StartRunDialog({
   open,
   onOpenChange,
   defaultMode,
+  projectId,
+  datasetVersionId,
+  preloadDatasetId,
+  onDatasetVersionChange,
   onStart,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   defaultMode: ReviewMode;
+  projectId: string;
+  datasetVersionId: string;
+  preloadDatasetId?: string;
+  onDatasetVersionChange(value: string): void;
   /** The dialog shows the start as pending until this settles. */
-  onStart(mode: ReviewMode, input: RunInput): void | Promise<void>;
+  onStart(mode: ReviewMode, input: RunInput, datasetVersionId?: string): void | Promise<void>;
 }) {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
@@ -574,7 +577,7 @@ export function StartRunDialog({
     if (!input) return;
     setStarting(true);
     try {
-      await onStart(mode, input);
+      await onStart(mode, input, datasetVersionId || undefined);
     } finally {
       setStarting(false);
     }
@@ -654,36 +657,19 @@ export function StartRunDialog({
               {STEPS[step] === "Data" && (
                 <>
                   <Field>
-                    <FieldLabel htmlFor="mock-dataset">Dataset</FieldLabel>
-                    <Select value="dataset" disabled>
-                      <SelectTrigger id="mock-dataset" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="dataset">{DATASET.name} · 8 columns</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="mock-version">Dataset version</FieldLabel>
-                    <Select value="v1" disabled>
-                      <SelectTrigger id="mock-version" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="v1">v1 · as uploaded · 1,240 rows</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                    <FieldLabel>Dataset</FieldLabel>
+                    <DatasetVersionSelect
+                      projectId={projectId}
+                      value={datasetVersionId}
+                      preloadDatasetId={preloadDatasetId}
+                      onChange={onDatasetVersionChange}
+                    />
                   </Field>
                   <div className="grid grid-cols-[auto_1fr] gap-2.5 rounded-xl border px-3.5 py-3 text-sm">
                     <Info className="mt-0.5 size-4 text-muted-foreground" />
                     <p>
-                      <b className="font-semibold">The Steward checks the data first.</b> It fixes problems in a copy
-                      and saves that as v2. v1 stays exactly as uploaded, so you can always compare.
+                      <b className="font-semibold">The Dataset stage runs first.</b> The research run continues through
+                      every stage using this version.
                     </p>
                   </div>
                 </>
