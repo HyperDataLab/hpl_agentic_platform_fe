@@ -42,6 +42,9 @@ export const projectKeys = {
   dataset: (id: string, datasetId: string) => ["projects", "detail", id, "datasets", datasetId] as const,
   datasetVersions: (id: string, datasetId: string, params?: ListParams) =>
     ["projects", "detail", id, "datasets", datasetId, "versions", params] as const,
+  localNodes: (id: string) => ["projects", "detail", id, "local-nodes"] as const,
+  localNodeReleases: (id: string, runnerId: string) =>
+    ["projects", "detail", id, "local-nodes", runnerId, "releases"] as const,
   runLists: (id: string) => ["projects", "detail", id, "runs", "list"] as const,
   runs: (id: string, params?: ListParams) => ["projects", "detail", id, "runs", "list", params] as const,
   run: (id: string, runId: string) => ["projects", "detail", id, "runs", runId] as const,

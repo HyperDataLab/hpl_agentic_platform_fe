@@ -25,8 +25,8 @@ export function destination(result: Pick<SessionResult, "user">) {
   if (target.origin !== window.location.origin) return fallback;
   const paths =
     result.user.platform_role === PlatformRole.PlatformAdmin
-      ? ["/admin", "/projects", "/dashboard", "/reviews"]
-      : ["/projects", "/dashboard", "/reviews"];
+      ? ["/admin", "/projects", "/dashboard", "/reviews", "/devices"]
+      : ["/projects", "/dashboard", "/reviews", "/devices"];
   return paths.some((path) => target.pathname === path || target.pathname.startsWith(`${path}/`))
     ? `${target.pathname}${target.search}${target.hash}`
     : fallback;

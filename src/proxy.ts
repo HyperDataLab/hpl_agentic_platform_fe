@@ -10,7 +10,7 @@ import {
 } from "@/lib/agents/agent-markdown";
 import { AUTH_COOKIE_NAME, LOGIN_PATH, REQUEST_PATH_HEADER } from "@/lib/auth/auth-config";
 
-const PROTECTED_PREFIXES = ["/admin", "/projects", "/reviews", "/dashboard"];
+const PROTECTED_PREFIXES = ["/admin", "/projects", "/reviews", "/dashboard", "/devices"];
 
 function isProtected(pathname: string) {
   return pathname === "/onboarding" || PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
@@ -63,5 +63,6 @@ export const config = {
     "/projects/:path*",
     "/reviews/:path*",
     "/dashboard/:path*",
+    "/devices/:path*",
   ],
 };

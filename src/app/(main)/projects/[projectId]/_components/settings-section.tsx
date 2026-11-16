@@ -19,6 +19,7 @@ import { ProjectRole, ProjectStatus } from "@/types/enums";
 import { MembersSection } from "./members-section";
 import { ProjectEmailSettings } from "./project-email-settings";
 import { SettingsIntegrations } from "./project-integrations/settings-integrations";
+import { SettingsLocalNodes } from "./project-local-nodes/settings-local-nodes";
 import { SettingsApiProvider, useProjectSettings } from "./settings-api";
 import { SettingsAccess, SettingsData, SettingsLiterature, SettingsModels, SettingsReview } from "./settings-extra";
 import { ChoiceRow, useDraft } from "./settings-kit";
@@ -59,6 +60,7 @@ const GROUPS: { label: string; tabs: { id: string; label: string }[] }[] = [
     tabs: [
       { id: "data", label: "Data & storage" },
       { id: "integrations", label: "Integrations" },
+      { id: "local-nodes", label: "Local Nodes" },
     ],
   },
   {
@@ -437,6 +439,14 @@ function SettingsContent({ workspace }: { workspace: WorkspaceProps }) {
               projectId={project.id}
               readOnly={archived}
               canManage={project.my_role === ProjectRole.ProjectManager}
+            />
+          )}
+          {tab === "local-nodes" && (
+            <SettingsLocalNodes
+              key={project.id}
+              projectId={project.id}
+              readOnly={archived}
+              canApprove={project.my_role === ProjectRole.ProjectManager}
             />
           )}
           {tab === "spending" && (

@@ -14,6 +14,7 @@ export const KNOWN_ROUTE_SEGMENTS = new Set([
   "chat",
   "contact",
   "dashboard",
+  "devices",
   "llms.txt",
   "mail",
   "onboarding",
