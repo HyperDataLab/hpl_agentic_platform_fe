@@ -4,7 +4,7 @@ import { connectionRequest } from "../connection-runtime";
 import apiService from "../core";
 import { downloadUrl, projectPath, requestDownload } from "../request";
 import type { FileDownload, ListParams } from "../types";
-import type { ConnectionKind, ConnectionSource } from "./fetch-data-connections";
+import type { ConnectionProviderId, ConnectionSource } from "./fetch-data-connections";
 
 /** Rounded profile released by a Local Node; withheld statistics remain null. */
 export interface LocalCard {
@@ -37,7 +37,29 @@ export interface LocalCard {
   disclosure: "standard" | "strict";
 }
 
-export interface DatasetVersionItem {
+/** What a version read from a data connection keeps about that connection, as it was then. */
+export interface ConnectionOrigin {
+  connection_id: string;
+  connection_name: string;
+  connection_kind: ConnectionProviderId;
+  source: ConnectionSource;
+  fetched_at: string;
+}
+
+/** What a version imported from a public repository keeps about the record it came from. */
+export interface PublicOrigin {
+  /** The repository that published it, such as `zenodo` or `dataverse`. */
+  source: string;
+  record_id: string;
+  doi: string | null;
+  source_url: string | null;
+  license: string | null;
+  citation: string | null;
+  file_url: string | null;
+  imported_at: string;
+}
+
+interface DatasetVersionFields {
   id: string;
   dataset_id: string;
   version_number: number;
@@ -47,14 +69,6 @@ export interface DatasetVersionItem {
   sha256: string;
   row_count: number;
   column_names: string[];
-  source_type: "upload" | "connection";
-  source: {
-    connection_id: string;
-    connection_name: string;
-    connection_kind: ConnectionKind;
-    source: ConnectionSource;
-    fetched_at: string;
-  } | null;
   /** `local`: the file stays on a Local Node; only metadata is on the Platform. */
   storage?: "platform" | "local";
   disclosure?: "standard" | "strict";
@@ -62,6 +76,23 @@ export interface DatasetVersionItem {
   local_card?: LocalCard | null;
   created_by_user_id: string;
   created_at: string;
+}
+
+/**
+ * A version and where it came from. The three origins are a union so that reading a connection's
+ * fields off a version requires narrowing on `source_type` first: a public import carries a record
+ * of its repository, not a connection.
+ */
+export type DatasetVersionItem = DatasetVersionFields &
+  (
+    | { source_type: "upload"; source: null }
+    | { source_type: "connection"; source: ConnectionOrigin }
+    | { source_type: "public"; source: PublicOrigin }
+  );
+
+/** The connection a version was read from, or null when it was uploaded or imported openly. */
+export function connectionOrigin(version: DatasetVersionItem | null | undefined): ConnectionOrigin | null {
+  return version?.source_type === "connection" ? version.source : null;
 }
 
 /** A version whose rows stay on a Local Node: no preview or download exists on the Platform. */

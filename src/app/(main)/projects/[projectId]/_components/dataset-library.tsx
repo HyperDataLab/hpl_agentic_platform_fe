@@ -13,6 +13,7 @@ import {
   Database,
   Eye,
   FileSpreadsheet,
+  Globe,
   HardDrive,
   LayoutGrid,
   List,
@@ -46,17 +47,25 @@ function rowCountLabel(version: DatasetItem["latest_version"]) {
   return `${isLocalVersion(version) ? "~" : ""}${count.toLocaleString("en-US")}`;
 }
 
-/** The provider's logo for data read from a connection; a sheet icon for an uploaded file. */
+/**
+ * A drive for data that stays on a Local Node, the provider's logo for data read from a
+ * connection, a globe for a public repository, and a sheet icon for an uploaded file.
+ */
 function SourceIcon({ dataset }: { dataset: DatasetItem }) {
   const version = dataset.latest_version;
   if (isLocalVersion(version)) {
     return <HardDrive aria-label="Stays on a Local Node" className="size-5 text-muted-foreground" />;
   }
-  if (version?.source) {
+  if (version?.source_type === "connection") {
     return (
       <span title={`Imported from ${version.source.connection_name}`} className="[&_img]:size-5 [&_svg]:size-5">
         <ConnectionLogo kind={version.source.connection_kind} />
       </span>
+    );
+  }
+  if (version?.source_type === "public") {
+    return (
+      <Globe aria-label="Imported from a public repository" className="size-5 text-indigo-600 dark:text-indigo-400" />
     );
   }
   const excel = /\.xlsx?$/i.test(version?.original_filename ?? "");
