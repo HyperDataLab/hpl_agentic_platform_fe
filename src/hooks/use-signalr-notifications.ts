@@ -1,12 +1,20 @@
 "use client";
 
-import { useContext } from "react";
+import type { NotificationItem } from "@/lib/api/services/fetch-notifications";
 
-import { SignalRNotificationsContext } from "@/lib/providers/signalr-provider";
+/** How the notification bell is fed. "offline": there is no notification stream. */
+export type NotificationConnectionStatus = "connected" | "connecting" | "reconnecting" | "offline";
 
-/** Reads the shared notification snapshot without opening another connection. */
-export function useSignalRNotifications() {
-  const notifications = useContext(SignalRNotificationsContext);
-  if (!notifications) throw new Error("useSignalRNotifications must be used within SignalRProvider.");
-  return notifications;
+/**
+ * The notification bell's feed. The old Platform pushed notifications over SSE; the i2h-worker has no notification
+ * stream yet, so the bell stays disabled. Run news still shows as toasts from the run's own stream.
+ */
+export function useSignalRNotifications(): {
+  items: NotificationItem[];
+  unreadCount: number;
+  hasSnapshot: boolean;
+  status: NotificationConnectionStatus;
+  isAuthenticated: boolean;
+} {
+  return { items: [], unreadCount: 0, hasSnapshot: true, status: "offline", isAuthenticated: false };
 }

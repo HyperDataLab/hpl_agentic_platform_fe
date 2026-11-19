@@ -1,5 +1,5 @@
 import type { AgentRole, GateKind, ReviewMode, RuleId, RunStage, Verdict } from "@/lib/run-stream/contract";
-import { RUN_ENDS_AT, SHOW_DATA_STAGE, SHOW_MAP_STAGE } from "@/lib/run-stream/features";
+import { RUN_ENDS_AT, SHOW_DATA_STAGE, SHOW_LOCKED_STAGES, SHOW_MAP_STAGE } from "@/lib/run-stream/features";
 
 export interface AgentMeta {
   name: string;
@@ -252,7 +252,8 @@ const LAST_REACHED =
 export const PIPELINE = SHOWN_PIPELINE.slice(0, LAST_REACHED);
 
 /** Stages after the hypotheses that runs don't reach yet: shown, but locked. */
-export const LOCKED_PIPELINE = LAST_REACHED === undefined ? [] : SHOWN_PIPELINE.slice(LAST_REACHED);
+export const LOCKED_PIPELINE =
+  LAST_REACHED === undefined || !SHOW_LOCKED_STAGES ? [] : SHOWN_PIPELINE.slice(LAST_REACHED);
 
 export const LOCKED_HINT = `Coming soon. For now a run ends once the hypotheses are picked${SHOW_MAP_STAGE ? " and mapped" : ""}.`;
 

@@ -1,30 +1,16 @@
 "use client";
 
-import { type ComponentProps, use, useState } from "react";
+import { type ComponentProps, useState } from "react";
 
 import { cn } from "cn";
 
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { getApiBaseUrl } from "@/lib/api/config";
+import { signInWithGoogle } from "@/hooks/use-auth";
 
-type GoogleButtonProps = Pick<ComponentProps<typeof Button>, "className" | "disabled">;
-
-export function GoogleSignInOption({ availability, disabled }: { availability: Promise<boolean>; disabled: boolean }) {
-  const available = use(availability);
-  if (!available) return null;
-
-  return (
-    <div className="flex flex-col gap-4">
-      <GoogleButton className="w-full" disabled={disabled} />
-      <div className="flex items-center gap-3">
-        <Separator className="flex-1" />
-        <span className="shrink-0 text-muted-foreground text-xs">or continue with email</span>
-        <Separator className="flex-1" />
-      </div>
-    </div>
-  );
-}
+type GoogleButtonProps = Pick<ComponentProps<typeof Button>, "className" | "disabled"> & {
+  /** Called with the reason when signing in did not work. */
+  onError(message: string): void;
+};
 
 /** Google's four-colour "G", as its sign-in guidelines ask for. */
 function GoogleLogo() {
@@ -50,13 +36,14 @@ function GoogleLogo() {
   );
 }
 
-export function GoogleButton({ className, disabled }: GoogleButtonProps) {
-  const [redirecting, setRedirecting] = useState(false);
+export function GoogleButton({ className, disabled, onError }: GoogleButtonProps) {
+  const [busy, setBusy] = useState(false);
 
-  function signIn() {
-    setRedirecting(true);
-    // Google sets its state cookie on this navigation; fetching the endpoint would lose the OAuth flow.
-    window.location.assign(`${getApiBaseUrl()}/auth/google/start`);
+  async function signIn() {
+    setBusy(true);
+    const error = await signInWithGoogle();
+    setBusy(false);
+    if (error) onError(error);
   }
 
   return (
@@ -64,12 +51,12 @@ export function GoogleButton({ className, disabled }: GoogleButtonProps) {
       type="button"
       variant="outline"
       className={cn(className)}
-      disabled={disabled || redirecting}
-      aria-busy={redirecting}
-      onClick={signIn}
+      disabled={disabled || busy}
+      aria-busy={busy}
+      onClick={() => void signIn()}
     >
       <GoogleLogo />
-      {redirecting ? "Redirecting to Google..." : "Continue with Google"}
+      {busy ? "Signing in..." : "Continue with Google"}
     </Button>
   );
 }

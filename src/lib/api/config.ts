@@ -1,7 +1,16 @@
-// The browser only ever talks to this app's own origin; next.config.mjs passes /api/v1 on to the
-// backend, so the backend's address never reaches the browser.
-export const API_PREFIX = "/api/v1";
+/** Where the i2h-worker answers: it starts runs, controls them and streams their events. Public, baked in at build. */
+export function getWorkerUrl() {
+  return (process.env.NEXT_PUBLIC_I2H_WORKER_URL || "http://localhost:8787").replace(/\/+$/, "");
+}
 
+/** The worker's versioned API: `/v1/projects/:p/runs/…`. */
 export function getApiBaseUrl() {
-  return API_PREFIX;
+  return `${getWorkerUrl()}/v1`;
+}
+
+/** PaperLab's PDF worker, which lists the lab's corpora for the corpus picker. */
+export function getPaperLabUrl() {
+  return (
+    process.env.NEXT_PUBLIC_PAPERLAB_WORKER_URL || "https://paperlab-pdf-worker.hyperdatalab.workers.dev"
+  ).replace(/\/+$/, "");
 }

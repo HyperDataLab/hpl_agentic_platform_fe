@@ -13,7 +13,10 @@ import {
 
 import type { NavGroup } from "./sidebar-items";
 
-export const adminSidebarItems: NavGroup[] = [
+/** Admin is hidden: Google accounts are never platform admins. The pages are kept; turning this on shows the menu. */
+export const SHOW_ADMIN_NAV = false;
+
+const allAdminSidebarItems: NavGroup[] = [
   {
     id: 1,
     label: "GENERAL",
@@ -105,3 +108,5 @@ export const adminSidebarItems: NavGroup[] = [
     ],
   },
 ];
+
+export const adminSidebarItems: NavGroup[] = SHOW_ADMIN_NAV ? allAdminSidebarItems : [];

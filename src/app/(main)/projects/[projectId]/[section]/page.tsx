@@ -1,48 +1,13 @@
-import { notFound, redirect } from "next/navigation";
+import { PLACEHOLDER_ID } from "@/lib/projects/project-id";
 
-import { getProjectAccess } from "@/lib/auth/project-access";
-import { getAuthenticatedUser } from "@/server/auth";
-import { getWorkspaceProject } from "@/server/projects";
+import { ProjectSectionPage } from "../_components/project-pages";
 
-import { WorkspaceSection } from "../_components/workspace-section";
-import { SectionHeader, WORKSPACE_SECTIONS } from "../_components/workspace-sections";
+// One page for every section, as `_`: the section is read from the URL (see firebase.json).
+export const dynamicParams = false;
+export function generateStaticParams() {
+  return [{ section: PLACEHOLDER_ID }];
+}
 
-export default async function Page({ params }: { params: Promise<{ projectId: string; section: string }> }) {
-  const { projectId, section } = await params;
-  const user = await getAuthenticatedUser(projectId);
-
-  if (!user) {
-    redirect("/auth/login");
-  }
-
-  const project = await getWorkspaceProject(projectId);
-  const config = Object.hasOwn(WORKSPACE_SECTIONS, section) ? WORKSPACE_SECTIONS[section] : undefined;
-
-  if (!project || !config) {
-    notFound();
-  }
-
-  if (config.managerOnly && !getProjectAccess(project.my_role, project.status).canAccessSettings) {
-    redirect(`/projects/${project.id}`);
-  }
-
-  if (section === "members" && getProjectAccess(project.my_role, project.status).canAccessSettings) {
-    redirect(`/projects/${project.id}/settings?tab=access`);
-  }
-
-  const header = <SectionHeader section={section} />;
-
-  return (
-    <div className="flex flex-col gap-6">
-      {section !== "members" && section !== "connections" && section !== "files" && section !== "settings" && header}
-      <WorkspaceSection
-        project={project}
-        section={section}
-        userId={user.id}
-        membersHeader={section === "members" ? header : undefined}
-        connectionsHeader={section === "connections" ? header : undefined}
-        filesHeader={section === "files" ? header : undefined}
-      />
-    </div>
-  );
+export default function Page() {
+  return <ProjectSectionPage />;
 }

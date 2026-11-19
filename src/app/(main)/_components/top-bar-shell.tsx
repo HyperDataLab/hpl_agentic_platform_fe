@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 
 import Link from "next/link";
 
+import { Cpu } from "lucide-react";
+
 import { BrandMark } from "@/components/brand-mark";
+import { Button } from "@/components/ui/button";
 import { APP_CONFIG } from "@/config/app-config";
 import type { AuthUser } from "@/lib/auth/auth-config";
 
@@ -30,6 +33,11 @@ export function TopBarShell({
           </Link>
           <div className="flex items-center gap-2">
             <NotificationBell />
+            <Button asChild variant="ghost" size="icon" aria-label="Language model settings">
+              <Link prefetch={false} href="/settings">
+                <Cpu aria-hidden="true" />
+              </Link>
+            </Button>
             <LayoutControls />
             <ThemeSwitcher />
             <AccountSwitcher

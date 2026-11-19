@@ -1,17 +1,18 @@
-import type { ReactNode } from "react";
+"use client";
 
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { type ReactNode, useEffect } from "react";
+
+import { useRouter } from "next/navigation";
 
 import { cn } from "cn";
 
 import { AppSidebar } from "@/app/(main)/dashboard/_components/sidebar/app-sidebar";
+import { AuthGate } from "@/components/auth/auth-gate";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { APP_CONFIG } from "@/config/app-config";
-import { getRoleHomePath } from "@/lib/auth/auth-config";
-import { getAuthenticatedUser } from "@/server/auth";
-import { getPreference } from "@/server/server-actions";
+import { type AuthUser, getRoleHomePath } from "@/lib/auth/auth-config";
+import { readPreference, readSidebarOpen } from "@/lib/preferences/client-preference";
 import { PlatformRole } from "@/types/enums";
 
 import { NotificationBell } from "../_components/notifications/notification-bell";
@@ -20,22 +21,21 @@ import { LayoutControls } from "../dashboard/_components/header/layout-controls"
 import { SearchDialog } from "../dashboard/_components/header/search-dialog";
 import { ThemeSwitcher } from "../dashboard/_components/header/theme-switcher";
 
-export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
-  const cookieStore = await cookies();
-  const defaultOpen = cookieStore.get("sidebar_state")?.value !== "false";
-  const [authenticatedUser, variant, collapsible] = await Promise.all([
-    getAuthenticatedUser(),
-    getPreference("sidebar_variant"),
-    getPreference("sidebar_collapsible"),
-  ]);
+// Admin is hidden: Google accounts are never platform admins, so everyone is sent on to their projects.
+export default function Layout({ children }: Readonly<{ children: ReactNode }>) {
+  return <AuthGate>{(user) => <AdminShell user={user}>{children}</AdminShell>}</AuthGate>;
+}
 
-  if (!authenticatedUser) {
-    redirect("/auth/login");
-  }
-
-  if (authenticatedUser.platform_role !== PlatformRole.PlatformAdmin) {
-    redirect(getRoleHomePath(authenticatedUser.platform_role));
-  }
+function AdminShell({ user: authenticatedUser, children }: Readonly<{ user: AuthUser; children: ReactNode }>) {
+  const router = useRouter();
+  const admin = authenticatedUser.platform_role === PlatformRole.PlatformAdmin;
+  useEffect(() => {
+    if (!admin) router.replace(getRoleHomePath(authenticatedUser.platform_role));
+  }, [admin, authenticatedUser.platform_role, router]);
+  const defaultOpen = readSidebarOpen();
+  const variant = readPreference("sidebar_variant");
+  const collapsible = readPreference("sidebar_collapsible");
+  if (!admin) return null;
 
   return (
     <SidebarProvider

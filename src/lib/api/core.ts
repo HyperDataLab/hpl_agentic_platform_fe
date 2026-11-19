@@ -1,44 +1,49 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from "axios";
 
-import { PUBLIC_AUTH_PATHS, SESSION_INVALID_CODES } from "@/lib/auth/auth-config";
-import { ApiError, type ApiFailure, type ApiResult, type RequestParams } from "@/types/api";
+import { ApiError, type RequestParams } from "@/types/api";
 
 import { getApiBaseUrl } from "./config";
 
 export type { RequestParams } from "@/types/api";
 
 type RequestOptions = Omit<AxiosRequestConfig, "url" | "method" | "data" | "params">;
+/** Gives the bearer token for a request: the signed-in account's Firebase ID token, or null. */
+export type TokenSource = () => Promise<string | null>;
 
+/** How the worker (and the old Platform API) describe a failure. */
+interface ErrorBody {
+  message?: string;
+  error?: string | { code?: string; message?: string; details?: ApiError["details"]; reason?: string };
+  code?: string;
+  meta?: { request_id?: string };
+}
+
+const STATUS_CODES: Record<number, string> = {
+  400: "VALIDATION_ERROR",
+  401: "UNAUTHENTICATED",
+  403: "FORBIDDEN",
+  404: "NOT_FOUND",
+  409: "CONFLICT",
+  429: "RATE_LIMITED",
+};
+
+/** Calls the i2h-worker with the Firebase ID token. A 401 means the account's session is over. */
 export class ApiService {
   private readonly client: AxiosInstance;
-  private csrfToken: string | null = null;
-  private csrfRequest: Promise<string> | null = null;
-  private csrfVersion = 0;
-  private authRetryAt = 0;
-  private authRateLimit: ApiError | null = null;
 
-  constructor(baseURL: string, timeout = 30000) {
-    this.client = axios.create({ baseURL, timeout, withCredentials: true });
+  constructor(
+    baseURL: string,
+    private readonly token: TokenSource = async () => null,
+    timeout = 30000,
+  ) {
+    this.client = axios.create({ baseURL, timeout });
     this.setupInterceptors();
   }
 
   private setupInterceptors(): void {
     this.client.interceptors.request.use(async (config) => {
-      const path = config.url ?? "";
-      const method = (config.method ?? "get").toUpperCase();
-      if (PUBLIC_AUTH_PATHS.includes(path) && Date.now() < this.authRetryAt) {
-        throw new ApiError(
-          429,
-          "RATE_LIMITED",
-          this.authRateLimit?.message ?? "Please wait before trying again.",
-          this.authRateLimit?.details,
-          this.authRateLimit?.requestId,
-          Math.ceil((this.authRetryAt - Date.now()) / 1000),
-        );
-      }
-      if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && !PUBLIC_AUTH_PATHS.includes(path)) {
-        config.headers.set("X-CSRF-Token", await this.getCsrfToken());
-      }
+      const token = await this.token();
+      if (token) config.headers.set("Authorization", `Bearer ${token}`);
       if (typeof FormData !== "undefined" && config.data instanceof FormData) {
         config.headers.delete("Content-Type");
       }
@@ -48,7 +53,7 @@ export class ApiService {
       (response) => {
         if (response.data?.success === false) {
           const error = this.responseError(response);
-          this.handleApiError(error, response.config.url);
+          this.handleApiError(error);
           throw error;
         }
         return response;
@@ -67,28 +72,22 @@ export class ApiService {
         const apiError = error.response
           ? this.responseError(error.response)
           : new ApiError(0, "NETWORK_ERROR", "Unable to connect to the server. Please try again.");
-        this.handleApiError(apiError, error.config?.url);
+        this.handleApiError(apiError);
         return Promise.reject(apiError);
       },
     );
   }
 
-  private handleApiError(error: ApiError, path?: string): void {
-    if (error.code === "RATE_LIMITED" && error.retryAfter !== null) {
-      if (PUBLIC_AUTH_PATHS.includes(path ?? "")) {
-        this.authRetryAt = Date.now() + error.retryAfter * 1000;
-        this.authRateLimit = error;
-      }
-    }
-    if (error.code === "CSRF_INVALID") this.setCsrfToken(null);
-    if (SESSION_INVALID_CODES.includes(error.code)) {
-      this.setCsrfToken(null);
-      if (typeof window !== "undefined") window.dispatchEvent(new Event("auth:expired"));
-    }
+  private handleApiError(error: ApiError): void {
+    if (error.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("auth:expired"));
   }
 
   private responseError(response: AxiosResponse<unknown>): ApiError {
-    const body = response.data as Partial<ApiFailure> | null | undefined;
+    const body = (response.data ?? null) as ErrorBody | null;
+    const detail = typeof body?.error === "object" ? body.error : null;
+    const text = typeof body?.error === "string" ? body.error : null;
+    // The worker answers `{ error: code, message }` with codes such as `not_found` or `LLM_KEY_REQUIRED`.
+    const textCode = text && /^[A-Za-z][A-Za-z0-9_]*$/.test(text) ? text.toUpperCase() : null;
     const retryHeader = response.headers["retry-after"];
     const retrySeconds = retryHeader == null ? NaN : Number(retryHeader);
     const retryDate = retryHeader == null ? NaN : Date.parse(String(retryHeader));
@@ -100,47 +99,17 @@ export class ApiService {
     }
     return new ApiError(
       response.status,
-      body?.error?.code ?? "HTTP_ERROR",
-      body?.message ?? "The server encountered an error. Please try again.",
-      body?.error?.details ?? [],
+      detail?.code ?? body?.code ?? textCode ?? STATUS_CODES[response.status] ?? "HTTP_ERROR",
+      body?.message ?? detail?.message ?? text ?? "The server encountered an error. Please try again.",
+      detail?.details ?? [],
       body?.meta?.request_id ?? response.headers["x-request-id"] ?? null,
       retryAfter,
-      body?.error?.reason ?? null,
+      detail?.reason ?? null,
     );
   }
 
-  setCsrfToken(token: string | null): void {
-    this.csrfVersion += 1;
-    this.csrfToken = token;
-    this.csrfRequest = null;
-  }
-
-  private async getCsrfToken(): Promise<string> {
-    if (this.csrfToken) return this.csrfToken;
-    if (this.csrfRequest !== null) return this.csrfRequest;
-    const version = this.csrfVersion;
-    const request = this.get<ApiResult<{ csrf_token: string }>>("/auth/csrf-token")
-      .then(({ data }) => {
-        // A login/logout or tab sync may have replaced the session while this GET was pending.
-        if (version !== this.csrfVersion) return this.getCsrfToken();
-        this.csrfToken = data.data.csrf_token;
-        return this.csrfToken;
-      })
-      .finally(() => {
-        if (this.csrfRequest === request) this.csrfRequest = null;
-      });
-    this.csrfRequest = request;
-    return request;
-  }
-
-  async request<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
-    try {
-      return await this.client.request<T>(config);
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.code !== "CSRF_INVALID" || config.signal?.aborted) throw error;
-      // Only retry an explicitly rejected CSRF request, once. Never replay other mutations.
-      return this.client.request<T>(config);
-    }
+  request<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    return this.client.request<T>(config);
   }
   get<T>(url: string, params?: RequestParams, options?: RequestOptions): Promise<AxiosResponse<T>> {
     return this.request<T>({ ...options, method: "GET", url, params });
@@ -174,5 +143,13 @@ export class ApiService {
     });
   }
 }
-const apiService = new ApiService(getApiBaseUrl());
+
+// Firebase is loaded on the first request, so modules that only import the client stay light (and testable).
+const idToken: TokenSource = async () => {
+  if (typeof window === "undefined") return null;
+  const { getIdToken } = await import("@/lib/firebase/client");
+  return getIdToken();
+};
+
+const apiService = new ApiService(getApiBaseUrl(), idToken);
 export default apiService;

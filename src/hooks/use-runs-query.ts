@@ -43,7 +43,8 @@ export function useRunDetailQuery(projectId: string, runId: string, options?: Ap
 }
 export function useCreateRunMutation(projectId: string) {
   return useApiMutation(
-    (data: CreateRunRequest) => fetchRuns.create(projectId, data),
+    ({ data, createdBy }: { data: CreateRunRequest; createdBy: string }) =>
+      fetchRuns.create(projectId, data, createdBy),
     [projectKeys.detail(projectId), projectKeys.lists(), adminKeys.all],
   );
 }

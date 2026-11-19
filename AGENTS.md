@@ -44,7 +44,6 @@ Available commands:
 ```bash
 npm run build
 npm test
-npm run test:api
 npm run lint
 npm run format
 npm run check
@@ -52,7 +51,7 @@ npm run check:fix
 npm run generate:presets
 ```
 
-Vitest tests run with `npm test`; live backend checks run separately with `npm run test:api`. Run tests, build, lint, check, or other validation commands only when the user explicitly requests that validation.
+Vitest tests run with `npm test`. Run tests, build, lint, check, or other validation commands only when the user explicitly requests that validation.
 
 ## Co-location-based structure
 
@@ -74,7 +73,7 @@ Keep a component inside its route until it is reused by another feature. Do not 
 2. When reproducing a UI from a screenshot or image, follow its visual direction closely, including layout, hierarchy, spacing, component structure, and important details. Implement it with the project's existing components and semantic theme tokens rather than copying raw color values. If the design needs a color that is not available through the existing theme tokens, or the user explicitly requests a non-theme color, use a named color from Tailwind's default palette. Do not use arbitrary hex, RGB, HSL, or OKLCH values.
 3. Reuse the existing dashboard shell, local components, layout controls, and theme tokens.
 4. Break each new page into focused components inside the route's `_components/` directory. Keep `page.tsx` small and focused on composing those pieces.
-5. Keep `page.tsx` as a Server Component by default. Move interactive or browser-dependent code into a dedicated Client Component.
+5. Keep `page.tsx` as a Server Component by default (it is rendered at build time). Move interactive, browser-dependent or account-dependent code into a dedicated Client Component.
 6. Add the screen to `src/navigation/sidebar/sidebar-items.ts` when it should appear in the dashboard navigation.
 7. Decide the information hierarchy before choosing widgets. Let the content determine the page structure.
 8. Keep the established visual rhythm where it fits: compact spacing, clear typography hierarchy, responsive action rows, and grids that collapse cleanly on smaller screens.
@@ -98,9 +97,11 @@ Keep a component inside its route until it is reused by another feature. Do not 
 
 ## Talking to the backend
 
-- The browser calls the API only through this app's own origin at `/api/v1/*`; `next.config.mjs` rewrites it to the backend. Use `getApiBaseUrl()` from `src/lib/api/config.ts`.
-- Server code (route handlers, server components, `src/server/`) uses `getServerApiBaseUrl()` from `src/lib/api/server-config.ts`. Never put the backend URL in a `NEXT_PUBLIC_*` variable or in client code.
-- Upload bodies pass through the rewrite; the limit is `experimental.proxyClientMaxBodySize` in `next.config.mjs`.
+- The app is a static export (`output: "export"`, built to `out/`) served by Firebase Hosting. There is no Next.js server: no server actions, route handlers, `cookies()`, `headers()` or `searchParams` in server components. Headers, the CSP and redirects live in `firebase.json`.
+- Pages that need an account render inside `AuthGate` (`src/components/auth/auth-gate.tsx`); Firebase Auth (Google, verified `@hyperdatalab.org` only) fills the Redux session (`use-auth-sync-across-tabs.ts`).
+- `projects/[projectId]/…` is exported once as `_` (`generateStaticParams`), and `firebase.json` rewrites every `/projects/<id>/…` to it. Read the real ids with `useProjectId()` / `useProjectSection()` / `useDatasetId()` from `src/hooks/use-project-id.ts`, never from `params`. A new dynamic route needs both a `_` param and a rewrite.
+- Projects and run metadata are in Firestore (`src/lib/api/services/firestore-store.ts`). Runs are started, controlled and streamed by the i2h-worker at `NEXT_PUBLIC_I2H_WORKER_URL` (`getApiBaseUrl()`); `apiService` and `authorizedFetch` send the Firebase ID token as `Authorization: Bearer`. The run stream is read with `fetch` and `src/lib/realtime/sse.ts`, since `EventSource` can't send that header.
+- The 9router key is typed in Settings and kept in localStorage only (`src/lib/llm/settings.ts`). It goes to the worker with a start or resume and nowhere else: never log it, bundle it or put it in a `NEXT_PUBLIC_*` variable.
 
 ## Toasts
 

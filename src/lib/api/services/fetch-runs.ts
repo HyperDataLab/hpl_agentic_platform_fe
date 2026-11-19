@@ -1,23 +1,49 @@
-import type { CaseReference, Charter, GateAnswer, IntentKind, ReviewMode } from "@/lib/run-stream/contract";
-import type { ApiResult } from "@/types/api";
-import type { RunStatus } from "@/types/enums";
+import { toLlmPayload } from "@/lib/llm/settings";
+import type { Charter, GateAnswer, IntentKind, ReviewMode, RunInput } from "@/lib/run-stream/contract";
+import { ApiError, type ApiResult } from "@/types/api";
+import { RunStatus } from "@/types/enums";
 
 import apiService from "../core";
 import { projectPath, runPath } from "../request";
 import type { ListParams } from "../types";
+import { firestoreRuns, type RunDoc } from "./firestore-store";
 
 export { RunStatus } from "@/types/enums";
 
-/** The body of `POST …/runs`: the research case and how the run stops for you. */
+/** Where a run reads papers from, besides the open literature search. */
+export interface RunSources {
+  /** A PaperLab corpus, used as seed papers. */
+  corpus_id?: string;
+  /** The lab's knowledge graph of papers. */
+  lab_kg?: boolean;
+  sciatlas?: boolean;
+  /** Read full texts (PaperFetchHub + GROBID) where a PDF is stored, instead of abstracts only. */
+  fulltext?: boolean;
+}
+
+/** The body of the worker's `POST /v1/projects/:p/runs`. */
 export interface CreateRunRequest {
-  /** Required unless the intent is explore_dataset. */
-  problem?: string | null;
-  intent: { kind: IntentKind; text: string };
-  context?: string;
-  constraints?: string[];
-  references?: CaseReference[];
-  domains: string[];
+  topic: string;
+  domains?: string[];
   review_mode: ReviewMode;
+  budget_usd?: number;
+  llm: {
+    base_url: string;
+    api_key: string;
+    model: string;
+    role_models?: Partial<Record<"theorist" | "methodologist" | "skeptic" | "judge" | "reviewer", string>>;
+  };
+  sources?: RunSources;
+}
+
+/** What `GET /v1/projects/:p/runs/:r` says about a run. */
+export interface RunState {
+  run_id: string;
+  /** `starting` while the engine container comes up; the app shows it as queued. */
+  status: "starting" | "running" | "paused" | "awaiting_review" | "completed" | "failed";
+  last_seq: number;
+  cost_usd: number | null;
+  message?: string;
 }
 
 /** The one source of a run's aim, scope and limits. It is a draft until the PI's charter settles it. */
@@ -113,6 +139,13 @@ export interface AcceptStageRequest {
   note?: string;
 }
 
+/** What the worker's gate endpoint takes. */
+export interface WorkerGateAnswer {
+  option_id: "approve" | "drop" | "reject";
+  dropped?: string[];
+  note?: string;
+}
+
 export type RunListResponse = ApiResult<RunItem[]>;
 export type RunDetailResponse = ApiResult<RunItem>;
 /** Stored run events in `seq` order. Each one is checked by the run event reader before use. */
@@ -131,47 +164,168 @@ export interface PiConsultation {
   decided_at: string | null;
 }
 
-export const fetchRuns = {
-  getList: async (projectId: string, params?: ListParams, signal?: AbortSignal): Promise<RunListResponse> => {
-    const response = await apiService.get<RunListResponse>(`${projectPath(projectId)}/runs`, params, { signal });
-    return response.data;
+/** The worker's answer when it no longer has the person's key (after an engine restart). */
+export const LLM_KEY_REQUIRED = "LLM_KEY_REQUIRED";
+
+/** The pipeline the i2h engine runs: every run from the worker is one. */
+export const I2H_PIPELINE = "idea2hypothesis";
+
+const ok = <T>(data: T, total?: number): ApiResult<T> => ({
+  success: true,
+  message: "OK",
+  data,
+  meta: {
+    request_id: "",
+    pagination: total === undefined ? null : { total, limit: total, offset: 0 },
   },
-  getById: async (projectId: string, runId: string, signal?: AbortSignal): Promise<RunDetailResponse> => {
-    const response = await apiService.get<RunDetailResponse>(runPath(projectId, runId), undefined, { signal });
-    return response.data;
-  },
-  create: async (projectId: string, data: CreateRunRequest): Promise<RunDetailResponse> => {
-    const response = await apiService.post<RunDetailResponse>(`${projectPath(projectId)}/runs`, data);
-    return response.data;
-  },
-  /** Asks the engine of the open stage where it is: for a run that looks stuck. */
-  sync: async (projectId: string, runId: string): Promise<RunDetailResponse> => {
-    const response = await apiService.post<RunDetailResponse>(`${runPath(projectId, runId)}/sync`);
-    return response.data;
-  },
-  /** Cancels the open stage; the run ends as stopped and its stage can be rerun. */
-  stop: async (projectId: string, runId: string): Promise<RunDetailResponse> => {
-    const response = await apiService.post<RunDetailResponse>(`${runPath(projectId, runId)}/stop`, {});
-    return response.data;
-  },
-  /** A new total token budget; a run that stopped on its budget goes on. */
-  raiseBudget: async (projectId: string, runId: string, tokenBudget: number): Promise<RunDetailResponse> => {
-    const response = await apiService.post<RunDetailResponse>(`${runPath(projectId, runId)}/budget`, {
-      token_budget: tokenBudget,
+});
+
+const notSupported = (what: string) =>
+  new ApiError(501, "NOT_SUPPORTED", `${what} isn't available with the i2h engine yet.`);
+
+const STATUSES = new Set<string>(Object.values(RunStatus));
+export function toRunStatus(status: string | null | undefined): RunStatus {
+  return status && STATUSES.has(status) ? (status as RunStatus) : RunStatus.Queued;
+}
+
+/** A run as the app shows it: its Firestore document, with what the worker says about it when known. */
+export function toRunItem(projectId: string, id: string, doc: RunDoc, state?: RunState): RunItem {
+  const status = toRunStatus(state?.status ?? doc.status);
+  const finished = [RunStatus.Completed, RunStatus.Failed, RunStatus.Stopped].includes(status);
+  return {
+    id,
+    project_id: projectId,
+    dataset_id: null,
+    dataset_version_id: null,
+    dataset_version_number: null,
+    created_by_user_id: doc.createdBy,
+    status,
+    auto_review: doc.review_mode === "auto",
+    budget_usd: "0",
+    cost_usd: String(state?.cost_usd ?? 0),
+    failure_message: status === RunStatus.Failed ? (state?.message ?? null) : null,
+    created_at: doc.createdAt,
+    started_at: doc.createdAt,
+    finished_at: finished ? doc.updatedAt : null,
+    updated_at: doc.updatedAt,
+    title: doc.topic,
+    case: {
+      version: 1,
+      status: "settled",
+      intent: { kind: "explain", text: doc.topic },
+      problem: { text: doc.topic, source: "researcher" },
+      context: "",
+      constraints: [],
+      references: [],
+      domains: doc.domains ?? [],
+      dataset_version_id: null,
+    },
+    domains: doc.domains ?? [],
+    review_mode: doc.review_mode,
+    ...(state ? { last_seq: state.last_seq } : {}),
+    pipeline_key: I2H_PIPELINE,
+    current_stage: null,
+    recovery: null,
+  };
+}
+
+/** Maps the run studio's answer onto the worker's three options. */
+export function toWorkerGateAnswer(answer: GateAnswer): WorkerGateAnswer {
+  const rejected = ["reject", "stop", "abandon", "cancel"].includes(answer.option_id);
+  const dropped = answer.dropped?.filter(Boolean) ?? [];
+  const note = answer.note?.trim();
+  let option: WorkerGateAnswer["option_id"] = dropped.length ? "drop" : "approve";
+  if (rejected) option = "reject";
+  return {
+    option_id: option,
+    ...(!rejected && dropped.length ? { dropped } : {}),
+    ...(note ? { note } : {}),
+  };
+}
+
+/** The body of a start: the run studio's input, the language model and the sources. */
+export function toCreateRunRequest(
+  input: RunInput,
+  mode: ReviewMode,
+  llm: CreateRunRequest["llm"],
+  sources?: RunSources,
+  budgetUsd?: number,
+): CreateRunRequest {
+  const chosen = Object.entries(sources ?? {}).filter(([, value]) => value !== undefined && value !== false);
+  return {
+    topic: input.problem.trim(),
+    ...(input.domains.length ? { domains: input.domains } : {}),
+    review_mode: mode,
+    ...(budgetUsd ? { budget_usd: budgetUsd } : {}),
+    llm,
+    ...(chosen.length ? { sources: Object.fromEntries(chosen) as RunSources } : {}),
+  };
+}
+
+async function getState(projectId: string, runId: string, signal?: AbortSignal): Promise<RunState> {
+  const response = await apiService.get<RunState>(`${runPath(projectId, runId)}`, undefined, { signal });
+  return response.data;
+}
+
+async function detail(projectId: string, runId: string, signal?: AbortSignal): Promise<RunDetailResponse> {
+  const [doc, state] = await Promise.all([firestoreRuns.get(projectId, runId), getState(projectId, runId, signal)]);
+  if (!doc) throw new ApiError(404, "NOT_FOUND", "This run no longer exists.");
+  // The worker is the run's truth; the document keeps the list in step for everyone else.
+  if (state.status !== doc.status) {
+    firestoreRuns.setStatus(projectId, runId, state.status).catch(() => {
+      // Shown from the worker either way; the list catches up on the next read.
     });
-    return response.data;
-  },
-  /** Starts a failed or stopped stage again; `fresh` starts it from its first step. */
-  rerunStage: async (projectId: string, runId: string, stageRunId: string, fresh = false) => {
-    const response = await apiService.post<ApiResult<unknown>>(
-      `${runPath(projectId, runId)}/stages/${encodeURIComponent(stageRunId)}/rerun`,
-      { fresh },
+  }
+  return ok(toRunItem(projectId, runId, doc, state));
+}
+
+async function control(projectId: string, runId: string, action: "pause" | "cancel" | "resume", body?: unknown) {
+  await apiService.post(`${runPath(projectId, runId)}/${action}`, body ?? {});
+  return detail(projectId, runId);
+}
+
+export const fetchRuns = {
+  /** The project's runs, newest first, from Firestore. */
+  getList: async (projectId: string, params?: ListParams, _signal?: AbortSignal): Promise<RunListResponse> => {
+    const runs = await firestoreRuns.list(projectId, params?.limit);
+    return ok(
+      runs.map(({ id, doc }) => toRunItem(projectId, id, doc)),
+      runs.length,
     );
-    return response.data;
   },
-  abandon: async (projectId: string, runId: string): Promise<RunDetailResponse> => {
-    const response = await apiService.post<RunDetailResponse>(`${runPath(projectId, runId)}/abandon`);
-    return response.data;
+  getById: detail,
+  /** The worker's view of a run: status, last event and cost. */
+  getState,
+  /** Starts a run on the worker, then records it in Firestore so the project lists it. */
+  create: async (projectId: string, data: CreateRunRequest, createdBy: string): Promise<RunDetailResponse> => {
+    const response = await apiService.post<{ run_id: string; status: string }>(`${projectPath(projectId)}/runs`, data);
+    const { run_id: runId, status } = response.data;
+    const doc = await firestoreRuns.create(projectId, runId, {
+      topic: data.topic,
+      review_mode: data.review_mode,
+      status: toRunStatus(status),
+      createdBy,
+      domains: data.domains ?? [],
+    });
+    return ok(toRunItem(projectId, runId, doc));
+  },
+  /** Keeps the run's document in step with a status the stream reported. */
+  recordStatus: (projectId: string, runId: string, status: RunStatus) =>
+    firestoreRuns.setStatus(projectId, runId, status),
+  /** Asks the worker where the run is: for a run that looks stuck. */
+  sync: (projectId: string, runId: string) => detail(projectId, runId),
+  /** Cancels the run; it ends as stopped. */
+  stop: (projectId: string, runId: string) => control(projectId, runId, "cancel"),
+  abandon: (projectId: string, runId: string) => control(projectId, runId, "cancel"),
+  pause: (projectId: string, runId: string) => control(projectId, runId, "pause"),
+  /** The worker never stores the key, so resuming sends the language model again. */
+  resume: (projectId: string, runId: string, llm: CreateRunRequest["llm"]) =>
+    control(projectId, runId, "resume", { llm }),
+  /** Picks a failed run up again from its last checkpoint. */
+  rerunStage: (projectId: string, runId: string, _stageRunId: string, llm: CreateRunRequest["llm"]) =>
+    control(projectId, runId, "resume", { llm }),
+  raiseBudget: async (_projectId: string, _runId: string, _tokenBudget: number): Promise<RunDetailResponse> => {
+    throw notSupported("Raising a run's budget");
   },
   getEvents: async (
     projectId: string,
@@ -179,89 +333,35 @@ export const fetchRuns = {
     params: { after: number; limit: number },
     signal?: AbortSignal,
   ): Promise<RunEventsResponse> => {
-    const response = await apiService.get<RunEventsResponse>(`${runPath(projectId, runId)}/events`, params, { signal });
-    return response.data;
-  },
-  answerGate: async (
-    projectId: string,
-    runId: string,
-    gateId: string,
-    answer: GateAnswer,
-  ): Promise<GateAnswerResponse> => {
-    const response = await apiService.post<GateAnswerResponse>(
-      `${runPath(projectId, runId)}/gates/${encodeURIComponent(gateId)}`,
-      answer,
-    );
-    return response.data;
-  },
-  answerStageGate: async (
-    projectId: string,
-    runId: string,
-    stageRunId: string,
-    gateId: string,
-    answer: StageGateAnswer,
-  ): Promise<ApiResult<{ gate_id: string; status: string }>> => {
-    const response = await apiService.post<ApiResult<{ gate_id: string; status: string }>>(
-      `${runPath(projectId, runId)}/stages/${encodeURIComponent(stageRunId)}/gates/${encodeURIComponent(gateId)}`,
-      answer,
-    );
-    return response.data;
-  },
-  acceptStage: async (
-    projectId: string,
-    runId: string,
-    stageRunId: string,
-    body: AcceptStageRequest,
-  ): Promise<ApiResult<unknown>> => {
-    const response = await apiService.post<ApiResult<unknown>>(
-      `${runPath(projectId, runId)}/stages/${encodeURIComponent(stageRunId)}/accept`,
-      body,
-    );
-    return response.data;
-  },
-  getConsultations: async (
-    projectId: string,
-    runId: string,
-    signal?: AbortSignal,
-  ): Promise<ApiResult<PiConsultation[]>> => {
-    const response = await apiService.get<ApiResult<PiConsultation[]>>(
-      `${runPath(projectId, runId)}/pi/consultations`,
-      undefined,
+    const response = await apiService.get<{ events: unknown[] }>(
+      `${runPath(projectId, runId)}/events`,
+      { ...params, format: "json" },
       { signal },
     );
-    return response.data;
+    return ok(response.data.events ?? []);
   },
-  /** Takes the PI's recommendation as your own decision. */
-  endorseConsultation: async (projectId: string, runId: string, consultationId: string, reason?: string) => {
-    const response = await apiService.post<ApiResult<{ consultation_id: string; status: string }>>(
-      `${runPath(projectId, runId)}/pi/consultations/${encodeURIComponent(consultationId)}/endorse`,
-      reason ? { reason } : {},
-    );
-    return response.data;
+  /**
+   * Answers a gate. After an engine restart the worker no longer has the key and answers 503 `LLM_KEY_REQUIRED`: the
+   * answer then goes again with the language model from Settings. The key is not sent when it isn't needed.
+   */
+  answerGate: async (projectId: string, runId: string, gateId: string, answer: GateAnswer) => {
+    const path = `${runPath(projectId, runId)}/gates/${encodeURIComponent(gateId)}`;
+    const body = toWorkerGateAnswer(answer);
+    const send = (extra?: { llm: CreateRunRequest["llm"] }) =>
+      apiService.post<{ gate_id?: string; resolved_seq?: number }>(path, { ...body, ...extra });
+    let response: Awaited<ReturnType<typeof send>>;
+    try {
+      response = await send();
+    } catch (error) {
+      if (!(error instanceof ApiError && error.code === LLM_KEY_REQUIRED)) throw error;
+      response = await send({ llm: toLlmPayload() });
+    }
+    return ok({ gate_id: response.data?.gate_id ?? gateId, resolved_seq: response.data?.resolved_seq ?? 0 });
   },
-  retryConsultation: async (projectId: string, runId: string, consultationId: string) => {
-    const response = await apiService.post<ApiResult<{ consultation_id: string; status: string }>>(
-      `${runPath(projectId, runId)}/pi/consultations/${encodeURIComponent(consultationId)}/retry`,
-    );
-    return response.data;
-  },
-  /** Writes the charter yourself; it replaces the PI's draft. */
-  putCharter: async (projectId: string, runId: string, charter: Charter, reason?: string) => {
-    const response = await apiService.put<ApiResult<{ charter_status: string }>>(
-      `${runPath(projectId, runId)}/pi/charter`,
-      {
-        charter,
-        ...(reason ? { reason } : {}),
-      },
-    );
-    return response.data;
-  },
-  pause: async (projectId: string, runId: string): Promise<RunDetailResponse> => {
-    const response = await apiService.post<RunDetailResponse>(`${runPath(projectId, runId)}/pause`);
-    return response.data;
-  },
-  resume: async (projectId: string, runId: string): Promise<RunDetailResponse> => {
-    const response = await apiService.post<RunDetailResponse>(`${runPath(projectId, runId)}/resume`);
-    return response.data;
-  },
+  /** The engine has no PI consultations: a charter is settled by the scope gate. */
+  getConsultations: async (
+    _projectId: string,
+    _runId: string,
+    _signal?: AbortSignal,
+  ): Promise<ApiResult<PiConsultation[]>> => ok([]),
 };

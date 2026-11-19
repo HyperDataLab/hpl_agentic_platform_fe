@@ -33,7 +33,7 @@ describe("Google connection handoff", () => {
       password: "secret",
       grantId: "secret-grant",
     } as unknown as Parameters<typeof beginGoogleConnection>[2]);
-    expect(assign).toHaveBeenCalledWith("/api/v1/projects/p/connections/google/start");
+    expect(assign).toHaveBeenCalledWith("http://localhost:8787/v1/projects/p/connections/google/start");
     expect(takeGoogleConnectionIntent("p", "other-user")).toBeNull();
     expect(takeGoogleConnectionIntent("other-project", "u")).toBeNull();
     expect(takeGoogleConnectionIntent("p", "u")).toEqual({ action: "create", kind, returnTo: "connections" });

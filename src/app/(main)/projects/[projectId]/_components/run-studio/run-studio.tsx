@@ -4,30 +4,17 @@ import { useEffect, useRef, useState } from "react";
 
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
-import {
-  ArrowRight,
-  ChevronRight,
-  CircleCheck,
-  CircleX,
-  Database,
-  Flag,
-  Lock,
-  PenLine,
-  Play,
-  Upload,
-} from "lucide-react";
+import { ArrowRight, ChevronRight, CircleCheck, CircleX, Flag, Lock, PenLine, Play } from "lucide-react";
 import { motion } from "motion/react";
 
 import { ManagementStatusBadge } from "@/components/management-status-badge";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldTitle } from "@/components/ui/field";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useInfiniteRuns } from "@/hooks/use-runs-query";
 import { projectKeys } from "@/lib/api/query-keys";
-import { type RunItem, runTitle } from "@/lib/api/services/fetch-runs";
+import { type RunItem, type RunSources, runTitle } from "@/lib/api/services/fetch-runs";
 import type { IntentKind, ReviewMode, RunInput } from "@/lib/run-stream/contract";
-import { SHOW_DATA_STAGE, SHOW_REVIEW_MODE, SHOW_WRITING_PREVIEW } from "@/lib/run-stream/features";
-import { DATASET } from "@/lib/run-stream/mock/scenario";
+import { SHOW_REVIEW_MODE, SHOW_WRITING_PREVIEW } from "@/lib/run-stream/features";
 import { type RunSession, useProjectRun, useRunStudio } from "@/lib/run-stream/run-store";
 import { displayStatus, finalResults, GATE_TITLE, inSentence, nextStop, signed } from "@/lib/run-stream/selectors";
 
@@ -44,6 +31,7 @@ import {
   STOP_INFO,
   stopsFor,
 } from "./run-meta";
+import { LlmKeyNotice, SourcesInput, useRunSources } from "./run-sources";
 import { compactNumber, RunStats } from "./run-stats";
 import {
   CaseDetailsInput,
@@ -65,43 +53,6 @@ function SectionTitle({ title, aside }: { title: string; aside?: string }) {
 }
 
 /** Your own data. A run starts from the topic alone for now, so choosing data stays locked. */
-function DataField() {
-  if (SHOW_DATA_STAGE)
-    return (
-      <Field>
-        <FieldTitle>Data</FieldTitle>
-        <p className="text-sm">
-          {DATASET.name} · v1{" "}
-          <span className="text-muted-foreground text-xs">· 1,240 rows, checked by the Steward first</span>
-        </p>
-      </Field>
-    );
-  return (
-    <Field>
-      <FieldTitle>
-        Data
-        <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-px font-medium text-[11px] text-muted-foreground">
-          <Lock className="size-2.5" />
-          Coming soon
-        </span>
-      </FieldTitle>
-      <div className="flex flex-wrap gap-2" title="Coming soon. For now a run starts from your topic alone.">
-        <Button variant="outline" size="sm" disabled>
-          <Upload />
-          Upload a dataset
-        </Button>
-        <Button variant="outline" size="sm" disabled>
-          <Database />
-          Choose existing
-        </Button>
-      </div>
-      <FieldDescription>
-        For now a run starts from your topic alone. Your own data comes in with experiments.
-      </FieldDescription>
-    </Field>
-  );
-}
-
 /** The next run, started right here: type the topic, keep its fields, start. */
 function TopicComposer({
   mode,
@@ -113,9 +64,10 @@ function TopicComposer({
   onModeChange(mode: ReviewMode): void;
   canWrite: boolean;
   /** Settles once the run has started or was refused. */
-  onStart(mode: ReviewMode, input: RunInput, from: HTMLElement | null): Promise<void>;
+  onStart(mode: ReviewMode, input: RunInput, sources: RunSources, from: HTMLElement | null): Promise<void>;
 }) {
   const draft = useTopicDraft("composer");
+  const [sources, setSources] = useRunSources();
   const button = useRef<HTMLButtonElement>(null);
   const [starting, setStarting] = useState(false);
   const stops = stopsFor(mode);
@@ -126,7 +78,7 @@ function TopicComposer({
     if (!input) return;
     setStarting(true);
     try {
-      await onStart(mode, input, button.current);
+      await onStart(mode, input, sources, button.current);
     } finally {
       setStarting(false);
     }
@@ -141,11 +93,12 @@ function TopicComposer({
         <span className="flex items-center gap-2 font-medium text-muted-foreground text-xs uppercase tracking-wide">
           Next research run
         </span>
+        <LlmKeyNotice />
         <TopicInput draft={draft} className="font-(family-name:--font-lora) font-normal text-[22px] leading-snug" />
         <IntentInput draft={draft} />
         <div className="grid gap-5 md:grid-cols-2">
           <FieldsInput draft={draft} />
-          <DataField />
+          <SourcesInput value={sources} onChange={setSources} />
         </div>
         <CaseDetailsInput draft={draft} />
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
@@ -583,8 +536,8 @@ export function RunStudio({ projectId, canWrite }: { projectId: string; canWrite
   }, [canStart, hasSession]);
 
   // The dialog stays open until the run has started, so a refused start can be fixed and tried again.
-  const start = async (chosen: ReviewMode, input: RunInput) => {
-    const runId = await startRun(projectId, chosen, input);
+  const start = async (chosen: ReviewMode, input: RunInput, sources: RunSources) => {
+    const runId = await startRun(projectId, chosen, input, sources);
     if (!runId) return;
     setDialog(false);
     void queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
@@ -619,9 +572,9 @@ export function RunStudio({ projectId, canWrite }: { projectId: string; canWrite
           mode={mode}
           onModeChange={setMode}
           canWrite={canWrite}
-          onStart={async (chosen, input, el) => {
+          onStart={async (chosen, input, sources, el) => {
             from.current = el;
-            await start(chosen, input);
+            await start(chosen, input, sources);
           }}
         />
       )}

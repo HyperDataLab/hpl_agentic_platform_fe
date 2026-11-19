@@ -2,105 +2,52 @@
 
 import { useEffect } from "react";
 
-import { usePathname, useRouter } from "next/navigation";
-
 import { useQueryClient } from "@tanstack/react-query";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { toast } from "sonner";
 
-import apiService from "@/lib/api/core";
-import { LOGIN_PATH, ONBOARDING_PATH, SESSION_INVALID_CODES } from "@/lib/auth/auth-config";
-import { AUTH_CHANNEL, broadcastAuthChange } from "@/lib/auth/session-events";
+import { LOGIN_PATH } from "@/lib/auth/auth-config";
+import { toCurrentUser } from "@/lib/auth/firebase-user";
+import { firebaseAuth } from "@/lib/firebase/client";
+import { LAB_DOMAIN, labEmail } from "@/lib/firebase/config";
 import { useAppDispatch } from "@/lib/redux/hooks";
-import { logout, restoreSession } from "@/lib/redux/slices/auth-slice";
+import { logout, setSession } from "@/lib/redux/slices/auth-slice";
 
+/**
+ * Keeps the store's session in step with Firebase Auth. Firebase shares the sign-in between tabs itself, so signing out
+ * in one tab signs out the others. An account outside the lab's domain is signed out at once.
+ */
 export function useAuthSyncAcrossTabs() {
   const dispatch = useAppDispatch();
-  const router = useRouter();
-  const pathname = usePathname();
   const queryClient = useQueryClient();
-  const shouldRestoreSession = ["/admin", "/projects", "/reviews", "/dashboard", ONBOARDING_PATH].some(
-    (path) => pathname === path || pathname.startsWith(`${path}/`),
-  );
 
   useEffect(() => {
-    let endingSession = false;
-    const restore = () => {
-      const pending = dispatch(restoreSession());
-      void pending.then((action) => {
-        if (endingSession) return;
-        if (
-          restoreSession.fulfilled.match(action) &&
-          !action.payload.user.onboarded &&
-          window.location.pathname !== ONBOARDING_PATH
-        ) {
-          const next = `${window.location.pathname}${window.location.search}`;
-          router.replace(`${ONBOARDING_PATH}?${new URLSearchParams({ next })}`);
-        }
-        if (
-          restoreSession.rejected.match(action) &&
-          !action.meta.aborted &&
-          action.payload &&
-          !SESSION_INVALID_CODES.includes(action.payload.code)
-        ) {
-          toast.error(action.payload.message);
-        }
-      });
-      return pending;
-    };
-    let request = shouldRestoreSession ? restore() : null;
-    const stopRestoring = () => request?.abort();
-    const refresh = () => {
-      if (!shouldRestoreSession || endingSession) return;
-      request?.abort();
-      request = restore();
-    };
-    const clearSession = () => {
-      if (endingSession) return false;
-      endingSession = true;
-      request?.abort();
-      apiService.setCsrfToken(null);
-      dispatch(logout());
-      // Clearing the cache while protected observers are mounted recreates their queries and another 401.
-      // Cancel requests and let the document navigation discard the old cache and Router state together.
-      void queryClient.cancelQueries();
-      if (window.location.pathname.startsWith("/auth/")) {
-        queryClient.clear();
-      } else if (window.location.pathname === ONBOARDING_PATH) {
-        // Onboarding shows no one's data and shares the sign-in shell: stay in the app so the shell doesn't reload.
-        queryClient.clear();
-        router.replace(LOGIN_PATH);
-      } else {
-        window.location.replace(LOGIN_PATH);
+    const auth = firebaseAuth();
+    let signedIn = false;
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user && (!labEmail(user.email) || !user.emailVerified)) {
+        void signOut(auth);
+        toast.error(`Only verified @${LAB_DOMAIN} accounts can sign in.`, { description: user.email ?? undefined });
+        return;
       }
-      return true;
-    };
-    const expire = () => {
-      // Several requests can fail together. Announce the transition once; receiving tabs must not echo it.
-      if (clearSession()) broadcastAuthChange("signed-out");
-    };
-    const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(AUTH_CHANNEL);
-    if (channel) {
-      channel.onmessage = ({ data }: MessageEvent<unknown>) => {
-        if (data === "signed-out") clearSession();
-        if (data === "signed-in" || data === "profile-changed" || data === "memberships-changed") {
-          if (endingSession && !window.location.pathname.startsWith("/auth/")) return;
-          endingSession = false;
-          apiService.setCsrfToken(null);
-          queryClient.clear();
-          refresh();
-          router.refresh();
-        }
-      };
-    }
+      if (user) {
+        signedIn = true;
+        dispatch(setSession(toCurrentUser(user)));
+        return;
+      }
+      dispatch(logout());
+      void queryClient.cancelQueries();
+      queryClient.clear();
+      // Signed out elsewhere (another tab, an expired account) while on a page that needs an account.
+      if (signedIn && !window.location.pathname.startsWith("/auth/")) window.location.replace(LOGIN_PATH);
+      signedIn = false;
+    });
+    // A request the worker refused for the account: sign out, which the listener above turns into the login page.
+    const expire = () => void signOut(auth);
     window.addEventListener("auth:expired", expire);
-    window.addEventListener("auth:authenticating", stopRestoring);
-    window.addEventListener("focus", refresh);
     return () => {
-      request?.abort();
-      channel?.close();
+      unsubscribe();
       window.removeEventListener("auth:expired", expire);
-      window.removeEventListener("auth:authenticating", stopRestoring);
-      window.removeEventListener("focus", refresh);
     };
-  }, [dispatch, queryClient, router, shouldRestoreSession]);
+  }, [dispatch, queryClient]);
 }

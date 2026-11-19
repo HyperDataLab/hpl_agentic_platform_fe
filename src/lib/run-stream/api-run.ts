@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 
 import { fetchRuns } from "@/lib/api/services/fetch-runs";
+import { toLlmPayload } from "@/lib/llm/settings";
 import { subscribeRunEvents } from "@/lib/realtime/run-events";
 import { RunStatus } from "@/types/enums";
 
@@ -47,6 +48,16 @@ export function revisionFindings(
   return findings;
 }
 
+/** A run lifecycle, as the studio's events say it, as a run status. */
+const STATUS_OF: Record<string, RunStatus> = {
+  running: RunStatus.Running,
+  paused: RunStatus.Paused,
+  awaiting_review: RunStatus.AwaitingReview,
+  completed: RunStatus.Completed,
+  failed: RunStatus.Failed,
+  stopped: RunStatus.Stopped,
+};
+
 const showError = (error: unknown) =>
   toast.error(error instanceof Error ? error.message : "Something went wrong. Please try again.");
 
@@ -63,6 +74,8 @@ export class ApiRun implements RunCommands {
   private following = false;
   /** The last stored event read, so the stream can be picked up again after it. */
   private lastSeq = 0;
+  /** The status last written to the run's document. */
+  private recorded: RunStatus | null = null;
 
   constructor(
     private readonly projectId: string,
@@ -105,13 +118,32 @@ export class ApiRun implements RunCommands {
             return;
           }
           this.following = true;
-          this.pacer.push(this.adapt(events));
+          const shown = this.adapt(events);
+          this.record(shown);
+          this.pacer.push(shown);
         },
         onEnded: () => void this.settle(),
         onSessionEnded: () => window.dispatchEvent(new Event("auth:expired")),
         onError: showError,
       },
     );
+  }
+
+  /** Keeps the run's Firestore document in step with the status its live events report, so the list shows it. */
+  private record(events: RunEvent[]) {
+    let status: RunStatus | null = null;
+    for (const event of events) {
+      if (event.type === "run.completed") status = RunStatus.Completed;
+      else if (event.type === "run.status") {
+        const next = event.payload.stopped ? "stopped" : event.payload.status;
+        status = STATUS_OF[next] ?? status;
+      }
+    }
+    if (!status || status === this.recorded) return;
+    this.recorded = status;
+    fetchRuns.recordStatus(this.projectId, this.runId, status).catch(() => {
+      // The list catches up the next time the run is opened.
+    });
   }
 
   /** Every event has been read. A Popper run's last events say how it ended; a pipeline run's may not, so it is asked. */
@@ -137,8 +169,14 @@ export class ApiRun implements RunCommands {
 
   async answerGate(gateId: string, answer: GateAnswer) {
     try {
-      if (this.adapter) await this.answerStage(this.adapter, gateId, answer);
-      else await fetchRuns.answerGate(this.projectId, this.runId, gateId, answer);
+      // A pipeline run's gate must still be the open one: an answer to one that closed would answer the next.
+      if (this.adapter && !this.adapter.route(gateId)) throw new Error("This review stop is no longer open.");
+      const route = this.adapter?.route(gateId);
+      const dropped =
+        route?.to === "accept"
+          ? route.hypothesisIds.filter((id) => answer.dropped?.includes(id))
+          : (answer.dropped ?? []);
+      await fetchRuns.answerGate(this.projectId, this.runId, gateId, { ...answer, dropped });
       return true;
     } catch (error) {
       showError(error);
@@ -146,52 +184,17 @@ export class ApiRun implements RunCommands {
     }
   }
 
-  private async answerStage(adapter: PipelineAdapter, gateId: string, answer: GateAnswer) {
-    const route = adapter.route(gateId);
-    if (!route) throw new Error("This review stop is no longer open.");
-    const note = answer.note?.trim();
-    if (route.to === "charter") {
-      if (answer.option_id === "retry")
-        await fetchRuns.retryConsultation(this.projectId, this.runId, route.consultationId);
-      else if (answer.charter) await fetchRuns.putCharter(this.projectId, this.runId, answer.charter, note);
-      else await fetchRuns.endorseConsultation(this.projectId, this.runId, route.consultationId, note);
-      return;
-    }
-    if (route.to === "accept") {
-      const dropped = answer.dropped ?? [];
-      await fetchRuns.acceptStage(this.projectId, this.runId, route.stageRunId, {
-        selection: { hypothesis_ids: route.hypothesisIds.filter((id) => !dropped.includes(id)) },
-        ...(note ? { note } : {}),
-      });
-      return;
-    }
-    if (route.kind === "artifact_review" && answer.option_id === "revise") {
-      await fetchRuns.answerStageGate(this.projectId, this.runId, route.stageRunId, gateId, {
-        action: "comment",
-        findings: revisionFindings(answer, route.findings ?? [], route.artifactId),
-        ...(note ? { text: note } : {}),
-      });
-      return;
-    }
-    const params = {
-      ...(answer.dropped?.length ? { dropped: answer.dropped } : {}),
-      ...(answer.kept?.length ? { kept: answer.kept } : {}),
-    };
-    await fetchRuns.answerStageGate(this.projectId, this.runId, route.stageRunId, gateId, {
-      ...(route.kind === "artifact_review"
-        ? { action: "approve" as const }
-        : { action: "answer" as const, option_id: answer.option_id }),
-      ...(note ? { text: note } : {}),
-      ...(Object.keys(params).length ? { params } : {}),
-    });
-  }
-
   // The run's status changes when the backend's `run.status` event arrives, not here.
   pause() {
     fetchRuns.pause(this.projectId, this.runId).catch(showError);
   }
 
+  /** The worker keeps no key, so the language model from Settings goes with the resume. */
   resume() {
-    fetchRuns.resume(this.projectId, this.runId).catch(showError);
+    try {
+      fetchRuns.resume(this.projectId, this.runId, toLlmPayload()).catch(showError);
+    } catch (error) {
+      showError(error);
+    }
   }
 }

@@ -5,29 +5,47 @@ import { ApiError } from "@/types/api";
 
 import { parseRunEvent, subscribeRunEvents } from "./run-events";
 
-class FakeSource {
-  static CLOSED = 2;
-  static instances: FakeSource[] = [];
-  readyState = 1;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  close = vi.fn(() => {
-    this.readyState = 2;
-  });
-  listeners = new Map<string, (event: { data: string }) => void>();
+vi.mock("@/lib/firebase/client", () => ({ getIdToken: async () => "id-token" }));
+
+/** One `fetch` of the worker's stream: the test writes server-sent events into it and closes it. */
+class FakeStream {
+  static instances: FakeStream[] = [];
+  controller!: ReadableStreamDefaultController<Uint8Array>;
+  readonly body: ReadableStream<Uint8Array>;
+  aborted = false;
   constructor(
     public url: string,
-    public options: EventSourceInit,
+    public init: RequestInit,
   ) {
-    FakeSource.instances.push(this);
+    this.body = new ReadableStream({ start: (controller) => void (this.controller = controller) });
+    init.signal?.addEventListener("abort", () => {
+      this.aborted = true;
+    });
+    FakeStream.instances.push(this);
   }
-  addEventListener(kind: string, listener: (event: { data: string }) => void) {
-    this.listeners.set(kind, listener);
+  emit(payload: unknown, event?: string) {
+    const lines = [...(event ? [`event: ${event}`] : []), `data: ${JSON.stringify(payload)}`];
+    const id = (payload as { seq?: number }).seq;
+    if (id) lines.unshift(`id: ${id}`);
+    this.controller.enqueue(new TextEncoder().encode(`${lines.join("\n")}\n\n`));
   }
-  emit(kind: string, payload: unknown) {
-    this.listeners.get(kind)?.({ data: JSON.stringify(payload) });
+  close() {
+    this.controller.close();
+  }
+  fail() {
+    this.controller.error(new TypeError("network error"));
+  }
+  header(name: string) {
+    return new Headers(this.init.headers).get(name);
   }
 }
+
+let refuse: number | null = null;
+const fetchStub = vi.fn(async (url: string, init: RequestInit) => {
+  if (refuse) return new Response(null, { status: refuse });
+  const stream = new FakeStream(url, init);
+  return new Response(stream.body, { status: 200, headers: { "content-type": "text/event-stream" } });
+});
 
 const event = (seq: number, type = "agent.message") => ({
   seq,
@@ -47,35 +65,58 @@ const page = (events: unknown[]) =>
   }) as Awaited<ReturnType<typeof fetchRuns.getEvents>>;
 const handlers = () => ({ onEvents: vi.fn(), onEnded: vi.fn(), onSessionEnded: vi.fn(), onError: vi.fn() });
 const seqs = (calls: unknown[][]) => calls.flatMap(([events]) => (events as { seq: number }[]).map((e) => e.seq));
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("run event subscription", () => {
   beforeEach(() => {
-    FakeSource.instances = [];
-    vi.stubGlobal("EventSource", FakeSource);
+    FakeStream.instances = [];
+    refuse = null;
+    fetchStub.mockClear();
+    vi.stubGlobal("fetch", fetchStub);
     vi.stubGlobal("window", { location: { origin: "https://frontend.test" } });
+    vi.stubEnv("NEXT_PUBLIC_I2H_WORKER_URL", "https://worker.test");
   });
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
-  it("reads stored events first, then streams from the last one with credentials", async () => {
+  it("reads stored events first, then streams from the last one with the ID token", async () => {
     const getEvents = vi.spyOn(fetchRuns, "getEvents").mockResolvedValueOnce(page([event(1), event(2)]));
     const listener = handlers();
     subscribeRunEvents("project/1", "run-1", { after: 0, live: true }, listener);
-    await vi.waitFor(() => expect(FakeSource.instances).toHaveLength(1));
+    await vi.waitFor(() => expect(FakeStream.instances).toHaveLength(1));
     expect(getEvents).toHaveBeenCalledWith("project/1", "run-1", { after: 0, limit: 500 }, expect.any(AbortSignal));
-    const source = FakeSource.instances[0];
-    const url = new URL(source.url);
-    expect(url.pathname).toBe("/api/v1/projects/project%2F1/runs/run-1/events/stream");
+    const stream = FakeStream.instances[0];
+    const url = new URL(stream.url);
+    expect(url.origin).toBe("https://worker.test");
+    expect(url.pathname).toBe("/v1/projects/project%2F1/runs/run-1/events");
     expect(url.searchParams.get("after")).toBe("2");
-    expect(source.options.withCredentials).toBe(true);
-    source.emit("run-event", event(2));
-    source.emit("run-event", event(3));
-    expect(seqs(listener.onEvents.mock.calls)).toEqual([1, 2, 3]);
-    source.emit("run-ended", { status: "completed" });
-    expect(listener.onEnded).toHaveBeenCalledOnce();
-    expect(source.close).toHaveBeenCalled();
+    expect(stream.header("Authorization")).toBe("Bearer id-token");
+    expect(stream.header("Last-Event-ID")).toBe("2");
+    expect(stream.header("Accept")).toBe("text/event-stream");
+    stream.emit(event(2));
+    stream.emit(event(3));
+    await vi.waitFor(() => expect(seqs(listener.onEvents.mock.calls)).toEqual([1, 2, 3]));
+    stream.emit({ status: "completed" }, "run-ended");
+    await vi.waitFor(() => expect(listener.onEnded).toHaveBeenCalledOnce());
+    expect(stream.aborted).toBe(true);
+  });
+
+  it("ends when the worker closes the stream of a finished run", async () => {
+    vi.spyOn(fetchRuns, "getEvents").mockResolvedValueOnce(page([event(1)]));
+    const getState = vi
+      .spyOn(fetchRuns, "getState")
+      .mockResolvedValue({ run_id: "run-1", status: "completed", last_seq: 2, cost_usd: 0.1 });
+    const listener = handlers();
+    subscribeRunEvents("p", "run-1", { after: 0, live: true }, listener);
+    await vi.waitFor(() => expect(FakeStream.instances).toHaveLength(1));
+    FakeStream.instances[0].emit(event(2));
+    FakeStream.instances[0].close();
+    await vi.waitFor(() => expect(listener.onEnded).toHaveBeenCalledOnce());
+    expect(getState).toHaveBeenCalledOnce();
+    expect(seqs(listener.onEvents.mock.calls)).toEqual([1, 2]);
+    expect(FakeStream.instances).toHaveLength(1);
   });
 
   it("only reads a run that is no longer live", async () => {
@@ -84,7 +125,7 @@ describe("run event subscription", () => {
     subscribeRunEvents("p", "run-1", { after: 0, live: false }, listener);
     await vi.waitFor(() => expect(listener.onEnded).toHaveBeenCalledOnce());
     expect(listener.onEvents).toHaveBeenCalledOnce();
-    expect(FakeSource.instances).toHaveLength(0);
+    expect(FakeStream.instances).toHaveLength(0);
   });
 
   it("after a dropped stream, reads what it missed and reconnects from there", async () => {
@@ -95,29 +136,39 @@ describe("run event subscription", () => {
       .mockResolvedValueOnce(page([event(2), event(3)]));
     const listener = handlers();
     subscribeRunEvents("p", "run-1", { after: 0, live: true }, listener);
-    await vi.waitFor(() => expect(FakeSource.instances).toHaveLength(1));
-    FakeSource.instances[0].onerror?.();
-    expect(FakeSource.instances[0].close).toHaveBeenCalled();
+    await vi.waitFor(() => expect(FakeStream.instances).toHaveLength(1));
+    FakeStream.instances[0].fail();
+    await vi.waitFor(() => expect(FakeStream.instances[0].aborted).toBe(true));
     await vi.advanceTimersByTimeAsync(1000);
     expect(getEvents).toHaveBeenLastCalledWith("p", "run-1", { after: 1, limit: 500 }, expect.any(AbortSignal));
-    await vi.waitFor(() => expect(FakeSource.instances).toHaveLength(2));
-    expect(new URL(FakeSource.instances[1].url).searchParams.get("after")).toBe("3");
-    expect(seqs(listener.onEvents.mock.calls)).toEqual([1, 2, 3]);
+    await vi.waitFor(() => expect(FakeStream.instances).toHaveLength(2));
+    expect(new URL(FakeStream.instances[1].url).searchParams.get("after")).toBe("3");
+    // The new stream replays from its cursor; nothing is delivered twice.
+    FakeStream.instances[1].emit(event(3));
+    FakeStream.instances[1].emit(event(4));
+    await vi.waitFor(() => expect(seqs(listener.onEvents.mock.calls)).toEqual([1, 2, 3, 4]));
   });
 
-  it("ends on session-ended and on a run the person can no longer see", async () => {
-    vi.spyOn(fetchRuns, "getEvents").mockResolvedValueOnce(page([]));
+  it("ends on session-ended, on a stream refused with 401, and on a run the person can no longer see", async () => {
+    vi.spyOn(fetchRuns, "getEvents").mockResolvedValue(page([]));
     const listener = handlers();
     subscribeRunEvents("p", "run-1", { after: 0, live: true }, listener);
-    await vi.waitFor(() => expect(FakeSource.instances).toHaveLength(1));
-    FakeSource.instances[0].emit("session-ended", { code: "SESSION_EXPIRED" });
-    expect(listener.onSessionEnded).toHaveBeenCalledWith("SESSION_EXPIRED");
+    await vi.waitFor(() => expect(FakeStream.instances).toHaveLength(1));
+    FakeStream.instances[0].emit({ code: "SESSION_EXPIRED" }, "session-ended");
+    await vi.waitFor(() => expect(listener.onSessionEnded).toHaveBeenCalledWith("SESSION_EXPIRED"));
 
+    refuse = 401;
+    const refused = handlers();
+    subscribeRunEvents("p", "run-3", { after: 0, live: true }, refused);
+    await vi.waitFor(() => expect(refused.onSessionEnded).toHaveBeenCalledWith("UNAUTHENTICATED"));
+
+    refuse = null;
     vi.spyOn(fetchRuns, "getEvents").mockRejectedValueOnce(new ApiError(404, "NOT_FOUND", "Run not found"));
     const gone = handlers();
     subscribeRunEvents("p", "run-2", { after: 0, live: true }, gone);
     await vi.waitFor(() => expect(gone.onError).toHaveBeenCalledOnce());
-    expect(FakeSource.instances).toHaveLength(1);
+    await flush();
+    expect(FakeStream.instances).toHaveLength(1);
   });
 
   it("drops null stage and actor and rejects what is not an event", () => {

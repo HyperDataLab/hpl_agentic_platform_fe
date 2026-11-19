@@ -1,7 +1,5 @@
 "use client";
 
-import { setValueToCookie } from "@/server/server-actions";
-
 import { setClientCookie } from "../cookie.client";
 import { setLocalStorageValue } from "../local-storage.client";
 import {
@@ -20,8 +18,9 @@ async function persistByMode(mode: PreferencePersistence, key: string, value: st
       setClientCookie(key, value);
       return;
 
+    // No server in a static export: the cookie is written here and read by the boot script.
     case "server-cookie":
-      await setValueToCookie(key, value);
+      setClientCookie(key, value);
       return;
 
     case "localStorage":

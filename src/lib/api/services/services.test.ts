@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactKind, PlatformRole, ProjectRole, ProjectStatus, RunStatus, UserStatus } from "@/types/enums";
 
 import apiService from "../core";
-import { failure, respond, success } from "../test-utils";
+import { respond, success } from "../test-utils";
 import { fetchAdmin } from "./fetch-admin";
 import { fetchArtifacts } from "./fetch-artifacts";
 import { fetchAuth } from "./fetch-auth";
@@ -13,8 +13,6 @@ import { fetchDatasets } from "./fetch-datasets";
 import { fetchInvitations } from "./fetch-invitations";
 import { fetchMembers } from "./fetch-members";
 import { fetchNotifications } from "./fetch-notifications";
-import { fetchProject } from "./fetch-project";
-import { fetchRuns } from "./fetch-runs";
 
 // These paths and verbs come from the backend handoff, including PATCH project and no DELETE project.
 const p = "project /1";
@@ -75,35 +73,6 @@ const contracts: Contract[] = [
     call: () => fetchInvitations.answer("member/1", "decline"),
   },
   {
-    name: "project list",
-    method: "get",
-    url: "/projects",
-    call: () => fetchProject.getList(list, signal),
-    params: list,
-    signal,
-  },
-  { name: "project detail", method: "get", url: project, call: () => fetchProject.getById(p, signal), signal },
-  {
-    name: "create project",
-    method: "post",
-    url: "/projects",
-    call: () => fetchProject.create({ name: "Study" }),
-    body: { name: "Study" },
-  },
-  {
-    name: "update project",
-    method: "patch",
-    url: project,
-    call: () => fetchProject.update(p, { objective: null }),
-    body: { objective: null },
-  },
-  ...(["archive", "restore", "complete", "reopen"] as const).map((action) => ({
-    name: `project ${action}`,
-    method: "post",
-    url: `${project}/${action}`,
-    call: () => fetchProject[action](p),
-  })),
-  {
     name: "member list",
     method: "get",
     url: `${project}/members`,
@@ -161,39 +130,6 @@ const contracts: Contract[] = [
     params: list,
     signal,
   },
-  {
-    name: "run list",
-    method: "get",
-    url: `${project}/runs`,
-    call: () => fetchRuns.getList(p, list, signal),
-    params: list,
-    signal,
-  },
-  { name: "run detail", method: "get", url: run, call: () => fetchRuns.getById(p, "run/1", signal), signal },
-  {
-    name: "create run",
-    method: "post",
-    url: `${project}/runs`,
-    call: () =>
-      fetchRuns.create(p, {
-        problem: "How does study time affect exam scores?",
-        intent: { kind: "explain", text: "Decide how much study time to advise." },
-        domains: ["education"],
-        review_mode: "copilot",
-      }),
-    body: {
-      problem: "How does study time affect exam scores?",
-      intent: { kind: "explain", text: "Decide how much study time to advise." },
-      domains: ["education"],
-      review_mode: "copilot",
-    },
-  },
-  ...(["sync", "abandon"] as const).map((action) => ({
-    name: `run ${action}`,
-    method: "post",
-    url: `${run}/${action}`,
-    call: () => fetchRuns[action](p, "run/1"),
-  })),
   {
     name: "artifact list",
     method: "get",
@@ -299,14 +235,6 @@ const contracts: Contract[] = [
     call: () => fetchAdmin.removeUserAvatar("user/1"),
   },
   {
-    name: "edit own profile",
-    method: "patch",
-    url: "/auth/me",
-    call: () => fetchAuth.updateProfile({ display_name: "Updated" }),
-    body: { display_name: "Updated" },
-  },
-  { name: "remove own avatar", method: "delete", url: "/auth/me/avatar", call: () => fetchAuth.removeAvatar() },
-  {
     name: "remove platform admin role",
     method: "put",
     url: "/users/user%2F1/platform-role",
@@ -351,7 +279,6 @@ describe("API service contracts", () => {
     // Singleton client uses the actual Axios pipeline, with only I/O replaced.
     const request = apiService.request.bind(apiService);
     vi.spyOn(apiService, "request").mockImplementation((config) => request({ ...config, adapter }));
-    apiService.setCsrfToken("csrf");
   });
 
   it.each([true, false])(
@@ -387,96 +314,19 @@ describe("API service contracts", () => {
       expect(result).toEqual(envelope);
       expect(adapter).toHaveBeenCalledTimes(1);
       const config = adapter.mock.calls[0][0];
-      expect(config).toMatchObject({ method, url, withCredentials: true });
+      expect(config).toMatchObject({ method, url });
       expect(config.params).toEqual(params);
       expect(config.signal).toBe(expectedSignal);
       expect(config.data === undefined ? undefined : JSON.parse(config.data as string)).toEqual(body);
-      expect(config.headers.get("X-CSRF-Token")).toBe(method === "get" ? undefined : "csrf");
     },
   );
 
-  it.each(["verifyEmailCode", "verifyLink"] as const)("%s seeds CSRF from the returned session", async (method) => {
-    const session = { user: { id: "user" }, session: { created_at: "now" }, csrf_token: "login-csrf" };
-    adapter.mockImplementation(async (config) => respond(config, success(session)));
-    const token = "t".repeat(64);
-    const result =
-      method === "verifyEmailCode"
-        ? await fetchAuth.verifyEmailCode({ email: "demo@example.com", code: "012345" })
-        : await fetchAuth.verifyLink(token);
-    expect(result).toEqual(session);
-    const config = adapter.mock.calls[0][0];
-    expect(config.url).toBe(method === "verifyEmailCode" ? "/auth/email/verify" : "/auth/email/verify-link");
-    expect(JSON.parse(config.data as string)).toEqual(
-      method === "verifyEmailCode" ? { email: "demo@example.com", code: "012345" } : { token },
-    );
-    expect(config.headers.has("X-CSRF-Token")).toBe(false);
-    await fetchProject.create({ name: "Study" });
-    expect(adapter.mock.calls.at(-1)?.[0].headers.get("X-CSRF-Token")).toBe("login-csrf");
-  });
-
-  it("startEmailSignIn returns a pending sign-in without replacing session CSRF", async () => {
-    const pending = { email: "demo@example.com", expires_in_seconds: 600, resend_after_seconds: 60 };
-    adapter.mockImplementation(async (config) => respond(config, success(pending)));
-    expect(await fetchAuth.startEmailSignIn(pending.email)).toEqual(pending);
-    const config = adapter.mock.calls[0][0];
-    expect(config.url).toBe("/auth/email/start");
-    expect(JSON.parse(config.data as string)).toEqual({ email: pending.email });
-    expect(config.headers.has("X-CSRF-Token")).toBe(false);
-    await fetchProject.create({ name: "Study" });
-    expect(adapter.mock.calls.at(-1)?.[0].headers.get("X-CSRF-Token")).toBe("csrf");
-  });
-
-  it("linkInfo looks at a link without starting a session", async () => {
-    const token = "t".repeat(64);
-    adapter.mockImplementation(async (config) => respond(config, success({ email: "d***@example.com" })));
-    expect(await fetchAuth.linkInfo(token)).toEqual({ email: "d***@example.com" });
-    const config = adapter.mock.calls[0][0];
-    expect(config.url).toBe("/auth/email/link-info");
-    expect(JSON.parse(config.data as string)).toEqual({ token });
-    expect(config.headers.has("X-CSRF-Token")).toBe(false);
-    await fetchProject.create({ name: "Study" });
-    expect(adapter.mock.calls.at(-1)?.[0].headers.get("X-CSRF-Token")).toBe("csrf");
-  });
-
-  it("me and csrfToken preserve the auth return contract and AbortSignal", async () => {
-    adapter.mockImplementation(async (config) =>
-      respond(
-        config,
-        success(config.url === "/auth/me" ? { user: { id: "u" }, memberships: [] } : { csrf_token: "fresh" }),
-      ),
-    );
-    expect(await fetchAuth.me(signal)).toEqual({ user: { id: "u" }, memberships: [] });
-    expect(await fetchAuth.csrfToken(signal)).toEqual({ csrf_token: "fresh" });
-    expect(adapter.mock.calls.every(([config]) => config.signal === signal)).toBe(true);
-    await fetchProject.archive(p);
-    expect(adapter.mock.calls.at(-1)?.[0].headers.get("X-CSRF-Token")).toBe("fresh");
-  });
-
-  it.each([false, true])("logout allDevices=%s clears CSRF only after success", async (allDevices) => {
-    await fetchAuth.logout(allDevices);
-    expect(adapter.mock.calls[0][0].url).toBe(allDevices ? "/auth/logout-all" : "/auth/logout");
-    adapter.mockImplementation(async (config) =>
-      respond(config, success(config.url === "/auth/csrf-token" ? { csrf_token: "fresh" } : null)),
-    );
-    await fetchProject.create({ name: "Study" });
-    expect(adapter.mock.calls.some(([config]) => config.url === "/auth/csrf-token")).toBe(true);
-  });
-
-  it("failed logout retains the established CSRF token", async () => {
-    adapter.mockImplementationOnce(async (config) => respond(config, failure("INTERNAL_ERROR"), 500));
-    await expect(fetchAuth.logout()).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
-    await fetchProject.create({ name: "Study" });
-    expect(adapter.mock.calls.at(-1)?.[0].headers.get("X-CSRF-Token")).toBe("csrf");
-  });
-
-  it.each(["own", "admin"])("uploads %s avatar with credentials, CSRF and the file multipart field", async (kind) => {
+  it.each(["own", "admin"])("uploads %s avatar as the file multipart field", async (kind) => {
     const file = new File(["image"], "avatar.png", { type: "image/png" });
     if (kind === "own") await fetchAuth.uploadAvatar(file);
     else await fetchAdmin.uploadUserAvatar("user/1", file);
     const config = adapter.mock.calls[0][0];
     expect(config.url).toBe(kind === "own" ? "/auth/me/avatar" : "/users/user%2F1/avatar");
-    expect(config.withCredentials).toBe(true);
-    expect(config.headers.get("X-CSRF-Token")).toBe("csrf");
     expect(config.data).toBeInstanceOf(FormData);
     expect((config.data as FormData).get("file")).toBe(file);
     expect(config.headers.get("Content-Type")).not.toBe("application/json");

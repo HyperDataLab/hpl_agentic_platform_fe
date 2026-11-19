@@ -63,7 +63,13 @@ export interface NavGroup {
   items: NavMainItem[];
 }
 
-export const sidebarItems: NavGroup[] = [
+/**
+ * The template's demo dashboards and apps. Hidden from the navigation (and the search) for HyperDataLab's idea2hypo;
+ * the pages are kept, so turning this on brings them back.
+ */
+export const SHOW_DEMO_NAV = false;
+
+const demoSidebarItems: NavGroup[] = [
   {
     id: 1,
     label: "Dashboards",
@@ -233,3 +239,5 @@ export const sidebarItems: NavGroup[] = [
     ],
   },
 ];
+
+export const sidebarItems: NavGroup[] = SHOW_DEMO_NAV ? demoSidebarItems : [];

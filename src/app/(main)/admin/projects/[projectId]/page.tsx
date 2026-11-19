@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { ArrowLeft, Database, FlaskConical, FolderKanban, Lightbulb, type LucideIcon, Users } from "lucide-react";
+
 import type { Metadata } from "next";
 
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +16,12 @@ export const metadata: Metadata = {
   title: "Project detail · OpenAI Scientist",
   description: "Review project activity, datasets, experiments, findings, and usage.",
 };
+
+// Exported once, as `_`; Firebase serves it for every project. Admin is hidden from the navigation.
+export const dynamicParams = false;
+export function generateStaticParams() {
+  return [{ projectId: "_" }];
+}
 
 export default async function Page({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;

@@ -48,7 +48,7 @@ describe("invite candidate SSE lifecycle", () => {
     const stop = subscribeInviteCandidates("project/1", { q: "ngo dat", limit: 20, offset: 40 }, listener);
     const source = FakeSource.instances[0];
     const url = new URL(source.url);
-    expect(url.pathname).toBe("/api/v1/projects/project%2F1/invite-candidates/stream");
+    expect(url.pathname).toBe("/v1/projects/project%2F1/invite-candidates/stream");
     expect(url.searchParams.get("q")).toBe("ngo dat");
     expect(url.searchParams.get("offset")).toBe("40");
     expect(source.options.withCredentials).toBe(true);
