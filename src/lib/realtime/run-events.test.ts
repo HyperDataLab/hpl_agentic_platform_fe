@@ -17,7 +17,11 @@ class FakeStream {
     public url: string,
     public init: RequestInit,
   ) {
-    this.body = new ReadableStream({ start: (controller) => void (this.controller = controller) });
+    this.body = new ReadableStream({
+      start: (controller) => {
+        this.controller = controller;
+      },
+    });
     init.signal?.addEventListener("abort", () => {
       this.aborted = true;
     });

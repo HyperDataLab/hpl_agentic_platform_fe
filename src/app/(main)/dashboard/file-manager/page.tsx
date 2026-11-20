@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { FolderPlus, Grid2X2, List, Upload } from "lucide-react";
-
 import type { Metadata } from "next";
 
 import { Button } from "@/components/ui/button";

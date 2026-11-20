@@ -109,7 +109,7 @@ export const fetchProject = {
     const email = await me();
     const projects = (await firestoreProjects.list(email))
       .map(({ id, doc }) => toProjectItem(id, doc, email))
-      .filter((project) => params?.include_archived || project.status !== ProjectStatus.Archived);
+      .filter((project) => (params?.include_archived ?? false) || project.status !== ProjectStatus.Archived);
     return ok(projects, projects.length);
   },
   getById: async (id: string, _signal?: AbortSignal): Promise<ProjectDetailResponse> => byId(id),

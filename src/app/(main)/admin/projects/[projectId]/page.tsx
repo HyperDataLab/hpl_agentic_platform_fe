@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { ArrowLeft, Database, FlaskConical, FolderKanban, Lightbulb, type LucideIcon, Users } from "lucide-react";
-
 import type { Metadata } from "next";
 
 import { Badge } from "@/components/ui/badge";
