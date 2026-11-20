@@ -42,3 +42,8 @@ next-env.d.ts
 
 # local documentation
 /docs/
+
+# firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log

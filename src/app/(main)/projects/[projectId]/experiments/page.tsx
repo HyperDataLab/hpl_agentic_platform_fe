@@ -1,6 +1,5 @@
-import ProjectSectionPage from "../[section]/page";
+import { ProjectSectionPage } from "../_components/project-pages";
 
-export default async function Page({ params }: { params: Promise<{ projectId: string }> }) {
-  const { projectId } = await params;
-  return <ProjectSectionPage params={Promise.resolve({ projectId, section: "experiments" })} />;
+export default function Page() {
+  return <ProjectSectionPage section="experiments" />;
 }

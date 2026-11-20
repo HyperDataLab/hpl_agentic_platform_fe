@@ -29,7 +29,9 @@ export function useProjectAccess(projectId: string) {
     [...projectAccessKey(projectId), userId],
     (signal) => fetchProjectAccess(projectId, signal),
     // A role change arrives as a notification, which refreshes this at once; the poll only backs that up.
-    { enabled: Boolean(projectId && userId), staleTime: 10_000, refetchInterval: 60_000 },
+    // Off: dataset permissions came from the old Platform API, which the i2h-worker doesn't have. Without them the
+    // dataset screens stay hidden.
+    { enabled: false, staleTime: 10_000, refetchInterval: 60_000 },
   );
   const denied = query.isError || query.data?.data.permissions.can_read_raw_datasets === false;
   useEffect(() => {

@@ -15,6 +15,7 @@ import { useAbandonRunMutation, useRunDetailQuery } from "@/hooks/use-runs-query
 import { projectKeys } from "@/lib/api/query-keys";
 import { fetchRuns, type RunItem } from "@/lib/api/services/fetch-runs";
 import { getProjectAccess } from "@/lib/auth/project-access";
+import { toLlmPayload } from "@/lib/llm/settings";
 import { isActiveRun } from "@/lib/research-workspace";
 import { type RunSession, useRunStudio } from "@/lib/run-stream/run-store";
 import { RunStatus } from "@/types/enums";
@@ -180,8 +181,9 @@ export function RecoveryBar({ session }: { session: RunSession }) {
   const run = query.data?.data;
   const recovery = run?.recovery;
   const countdown = useCountdown(recovery?.state === "healing" ? recovery.next_try_at : null);
-  const rerun = useApiMutation((fresh: boolean) =>
-    fetchRuns.rerunStage(projectId, runId, run?.current_stage?.stage_run_id ?? "", fresh),
+  // The worker keeps no key: picking the run up again sends the language model from Settings.
+  const rerun = useApiMutation((_fresh: boolean) =>
+    fetchRuns.rerunStage(projectId, runId, run?.current_stage?.stage_run_id ?? "", toLlmPayload()),
   );
   const sync = useApiMutation(() => fetchRuns.sync(projectId, runId), [projectKeys.run(projectId, runId)]);
 

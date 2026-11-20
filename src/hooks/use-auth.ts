@@ -1,86 +1,67 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-
-import { useQueryClient } from "@tanstack/react-query";
+import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { toast } from "sonner";
 
-import { type EmailCodeSignIn, fetchAuth } from "@/lib/api/services/fetch-auth";
-import { ONBOARDING_PATH, SESSION_INVALID_CODES } from "@/lib/auth/auth-config";
-import { broadcastAuthChange } from "@/lib/auth/session-events";
-import type { SessionResult } from "@/lib/auth/types";
-import { useAppDispatch, useAppSelector } from "@/lib/redux/hooks";
-import { restoreSession, selectAuth, setSession } from "@/lib/redux/slices/auth-slice";
-import { ApiError } from "@/types/api";
-import { PlatformRole, ProjectRole } from "@/types/enums";
+import { firebaseAuth } from "@/lib/firebase/client";
+import { LAB_DOMAIN, labEmail } from "@/lib/firebase/config";
+import { useAppSelector } from "@/lib/redux/hooks";
+import { selectAuth } from "@/lib/redux/slices/auth-slice";
+import { ProjectRole } from "@/types/enums";
 
-export function destination(result: Pick<SessionResult, "user">) {
+/** Where to go after signing in: the `next` page when it is one of ours, otherwise the projects. */
+export function destination() {
   const next = new URLSearchParams(window.location.search).get("next");
-  if (!result.user.onboarded) {
-    return next ? `${ONBOARDING_PATH}?${new URLSearchParams({ next })}` : ONBOARDING_PATH;
-  }
-  const fallback = result.user.platform_role === PlatformRole.PlatformAdmin ? "/admin" : "/projects";
+  const fallback = "/projects";
   if (!next?.startsWith("/") || next.startsWith("//") || next.includes("\\")) return fallback;
   const target = new URL(next, window.location.origin);
   if (target.origin !== window.location.origin) return fallback;
-  const paths =
-    result.user.platform_role === PlatformRole.PlatformAdmin
-      ? ["/admin", "/projects", "/dashboard", "/reviews"]
-      : ["/projects", "/dashboard", "/reviews"];
-  return paths.some((path) => target.pathname === path || target.pathname.startsWith(`${path}/`))
+  return ["/projects", "/settings"].some((path) => target.pathname === path || target.pathname.startsWith(`${path}/`))
     ? `${target.pathname}${target.search}${target.hash}`
     : fallback;
 }
 
+/**
+ * Signs in with Google, limited to the lab's domain. Resolves to an error to show, or null once signed in (or when the
+ * person closed the popup).
+ */
+export async function signInWithGoogle(): Promise<string | null> {
+  const auth = firebaseAuth();
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ hd: LAB_DOMAIN, prompt: "select_account" });
+  try {
+    const result = await signInWithPopup(auth, provider);
+    if (!labEmail(result.user.email) || !result.user.emailVerified) {
+      await signOut(auth);
+      return `${result.user.email ?? "This account"} is not a verified @${LAB_DOMAIN} account.`;
+    }
+    return null;
+  } catch (cause) {
+    const code = (cause as { code?: string }).code;
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return null;
+    if (code === "auth/operation-not-allowed" || code === "auth/configuration-not-found")
+      return "Google sign-in is not enabled for this Firebase project yet.";
+    if (code === "auth/popup-blocked") return "The browser blocked the sign-in window. Allow pop-ups and try again.";
+    return "Unable to sign in. Please try again.";
+  }
+}
+
 export function useAuth(projectId?: string) {
-  const dispatch = useAppDispatch();
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const auth = useAppSelector(selectAuth);
   const projectRole: ProjectRole | undefined = auth.memberships.find((item) => item.project_id === projectId)?.role;
-  const isAdmin = auth.user?.platform_role === PlatformRole.PlatformAdmin;
 
-  const completeLogin = async (result: SessionResult) => {
-    queryClient.clear();
-    dispatch(setSession({ user: result.user, session: result.session, memberships: [] }));
-    broadcastAuthChange("signed-in");
-    // Login/verification already established a valid session. A temporary /me failure must not undo it.
-    const action = await dispatch(restoreSession());
-    router.replace(destination(restoreSession.fulfilled.match(action) ? action.payload : result));
-    router.refresh();
-    return result;
-  };
-  const signInWithCode = async (data: EmailCodeSignIn) => completeLogin(await fetchAuth.verifyEmailCode(data));
-  const signInWithLink = async (token: string) => completeLogin(await fetchAuth.verifyLink(token));
-  const completeOnboarding = async (displayName: string) => {
-    const result = await fetchAuth.updateProfile({ display_name: displayName });
-    const action = await dispatch(restoreSession());
-    broadcastAuthChange("profile-changed");
-    // The name is saved; a temporary /me failure must not keep the user on this step.
-    router.replace(destination(restoreSession.fulfilled.match(action) ? action.payload : { user: result.data }));
-    router.refresh();
-  };
-  const logout = async (allDevices = false) => {
-    try {
-      await fetchAuth.logout(allDevices);
-    } catch (error) {
-      if (!(error instanceof ApiError) || !SESSION_INVALID_CODES.includes(error.code)) throw error;
-    }
-    // The auth provider owns cancellation, session cleanup, cross-tab sync and the single login navigation.
-    window.dispatchEvent(new Event("auth:expired"));
-    toast.success(allDevices ? "Signed out of all devices." : "Signed out successfully.");
+  const logout = async (_allDevices = false) => {
+    await signOut(firebaseAuth());
+    toast.success("Signed out successfully.");
   };
   return {
     ...auth,
-    isAdmin,
+    isAdmin: false,
     projectRole,
     isProjectManager: projectRole === ProjectRole.ProjectManager,
     isResearcher: projectRole === ProjectRole.Researcher,
     isReviewer: projectRole === ProjectRole.Reviewer,
-    startEmailSignIn: fetchAuth.startEmailSignIn,
-    signInWithCode,
-    signInWithLink,
-    completeOnboarding,
+    signInWithGoogle,
     logout,
   };
 }

@@ -1,11 +1,12 @@
 import { z } from "zod";
 
-import { getApiBaseUrl } from "@/lib/api/config";
-import { runPath } from "@/lib/api/request";
+import { authorizedFetch, runPath } from "@/lib/api/request";
 import { fetchRuns } from "@/lib/api/services/fetch-runs";
 import { SESSION_INVALID_CODES } from "@/lib/auth/auth-config";
 import type { RunEvent } from "@/lib/run-stream/contract";
 import { ApiError } from "@/types/api";
+
+import { readSse, type SseMessage } from "./sse";
 
 const PAGE = 500;
 
@@ -54,9 +55,16 @@ interface RunEventHandlers {
   onError: (error: Error) => void;
 }
 
+/** Run statuses after which nothing more happens. */
+const FINISHED = new Set(["completed", "failed", "stopped", "budget_exceeded"]);
+
 /**
  * Follows a run: reads every stored event after `after`, then streams new ones while the run is `live`.
  * After a dropped connection it reads what it missed and reconnects.
+ *
+ * The worker's stream (`GET …/events?after=N`) sends each event as `id: <seq>` and `data: <envelope>`. It is read with
+ * `fetch`, because `EventSource` cannot send the `Authorization` header. When the worker closes the stream, the run's
+ * state says whether it ended or the stream should be picked up again.
  */
 export function subscribeRunEvents(
   projectId: string,
@@ -64,7 +72,7 @@ export function subscribeRunEvents(
   options: { after: number; live: boolean },
   handlers: RunEventHandlers,
 ) {
-  let source: EventSource | null = null;
+  let stream: AbortController | null = null;
   let disposed = false;
   let syncing = false;
   let lastSeq = options.after;
@@ -73,12 +81,15 @@ export function subscribeRunEvents(
   let followed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const controller = new AbortController();
+  const closeStream = () => {
+    stream?.abort();
+    stream = null;
+  };
   const stop = () => {
     disposed = true;
     controller.abort();
     clearTimeout(timer);
-    source?.close();
-    source = null;
+    closeStream();
   };
   const deliver = (events: RunEvent[], origin: RunEventOrigin) => {
     const fresh = events.filter((event) => event.seq > lastSeq);
@@ -97,11 +108,24 @@ export function subscribeRunEvents(
     }
   };
   const retry = (seconds?: number) => {
-    source?.close();
-    source = null;
+    closeStream();
     clearTimeout(timer);
     const delay = seconds ?? [1, 2, 5, 10, 30][Math.min(attempt++, 4)];
     timer = setTimeout(() => void sync(), delay * 1000);
+  };
+  const fail = (error: unknown) => {
+    if (disposed) return;
+    if (error instanceof ApiError && SESSION_INVALID_CODES.includes(error.code)) {
+      stop();
+      handlers.onSessionEnded(error.code);
+    } else if (error instanceof ApiError && [403, 404].includes(error.status)) {
+      stop();
+      handlers.onError(error);
+    } else {
+      // Only the first failure is reported; the retries after it stay quiet.
+      if (attempt === 0) handlers.onError(error instanceof Error ? error : new Error("Lost the run's progress."));
+      retry(error instanceof ApiError && error.code === "RATE_LIMITED" ? (error.retryAfter ?? 60) : undefined);
+    }
   };
   // Reads what was missed, then connects the stream. Errors that cannot heal end the subscription.
   const sync = async () => {
@@ -110,75 +134,106 @@ export function subscribeRunEvents(
     try {
       await catchUp();
       if (disposed) return;
-      if (options.live) connect();
+      if (options.live) void connect();
       else {
         stop();
         handlers.onEnded();
       }
     } catch (error) {
-      if (disposed) return;
-      if (error instanceof ApiError && SESSION_INVALID_CODES.includes(error.code)) {
-        stop();
-        handlers.onSessionEnded(error.code);
-      } else if (error instanceof ApiError && [403, 404].includes(error.status)) {
-        stop();
-        handlers.onError(error);
-      } else {
-        // Only the first failure is reported; the retries after it stay quiet.
-        if (attempt === 0) handlers.onError(error instanceof Error ? error : new Error("Lost the run's progress."));
-        retry(error instanceof ApiError && error.code === "RATE_LIMITED" ? (error.retryAfter ?? 60) : undefined);
-      }
+      fail(error);
     } finally {
       syncing = false;
     }
   };
-  const connect = () => {
-    const url = new URL(`${getApiBaseUrl()}${runPath(projectId, runId)}/events/stream`, window.location.origin);
-    url.searchParams.set("after", String(lastSeq));
-    const current = new EventSource(url.href, { withCredentials: true });
-    source = current;
-    current.onopen = () => {
-      if (source !== current) return;
-      attempt = 0;
-      followed = true;
-    };
-    current.addEventListener("run-event", (message) => {
-      if (disposed || source !== current) return;
-      let event: RunEvent | null = null;
-      try {
-        event = parseRunEvent(JSON.parse((message as MessageEvent<string>).data));
-      } catch {
-        event = null;
-      }
-      // Events the stream replays before it opened are still the history.
-      if (event) deliver([event], followed ? "live" : "history");
-      else {
-        handlers.onError(new Error("Unable to read the run's progress. Reconnecting."));
-        retry();
-      }
-    });
-    current.addEventListener("run-ended", () => {
-      if (disposed || source !== current) return;
+  const receive = (message: SseMessage, current: AbortController) => {
+    if (disposed || stream !== current) return;
+    if (message.event === "run-ended") {
       stop();
       handlers.onEnded();
-    });
-    current.addEventListener("session-ended", (message) => {
-      if (disposed || source !== current) return;
+      return;
+    }
+    if (message.event === "session-ended") {
       let code = "UNAUTHENTICATED";
       try {
-        code = z.object({ code: z.string() }).parse(JSON.parse((message as MessageEvent<string>).data)).code;
+        code = z.object({ code: z.string() }).parse(JSON.parse(message.data)).code;
       } catch {
         /* Closing is still right when the reason can't be read. */
       }
       stop();
       handlers.onSessionEnded(code);
-    });
-    // The browser would retry on its own, but a stream refused with 401 or 404 never comes back.
-    // Reading the missed events tells the two apart and fills the gap either way.
-    current.onerror = () => {
-      if (disposed || source !== current) return;
+      return;
+    }
+    if (message.event !== "message" && message.event !== "run-event") return;
+    let event: RunEvent | null = null;
+    try {
+      event = parseRunEvent(JSON.parse(message.data));
+    } catch {
+      event = null;
+    }
+    // Events the stream replays before it opened are still the history.
+    if (event) deliver([event], followed ? "live" : "history");
+    else {
+      handlers.onError(new Error("Unable to read the run's progress. Reconnecting."));
       retry();
-    };
+    }
+  };
+  // The worker closed the stream: the run ended, or the connection should be picked up again.
+  const closed = async () => {
+    try {
+      const state = await fetchRuns.getState(projectId, runId, controller.signal);
+      if (disposed) return;
+      if (FINISHED.has(state.status) && state.last_seq <= lastSeq) {
+        stop();
+        handlers.onEnded();
+        return;
+      }
+    } catch (error) {
+      if (disposed) return;
+      if (
+        error instanceof ApiError &&
+        (SESSION_INVALID_CODES.includes(error.code) || [403, 404].includes(error.status))
+      )
+        return fail(error);
+    }
+    retry();
+  };
+  const connect = async () => {
+    const current = new AbortController();
+    stream = current;
+    try {
+      const response = await authorizedFetch(
+        `${runPath(projectId, runId)}/events?${new URLSearchParams({ after: String(lastSeq) })}`,
+        {
+          headers: { Accept: "text/event-stream", "Last-Event-ID": String(lastSeq) },
+          signal: current.signal,
+          cache: "no-store",
+        },
+      );
+      if (disposed || stream !== current) return;
+      if (!response.ok || !response.body) {
+        const codes: Record<number, string> = { 401: "UNAUTHENTICATED", 429: "RATE_LIMITED" };
+        const code = codes[response.status] ?? "HTTP";
+        const retryAfter = Number(response.headers.get("retry-after"));
+        throw new ApiError(
+          response.status,
+          code,
+          response.status === 404 ? "This run no longer exists." : "Lost the run's progress.",
+          [],
+          null,
+          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+        );
+      }
+      attempt = 0;
+      followed = true;
+      await readSse(response.body, (message) => receive(message, current), current.signal);
+      if (disposed || stream !== current) return;
+      await closed();
+    } catch (error) {
+      if (disposed || stream !== current || current.signal.aborted) return;
+      // A stream refused with 401 or 404 never comes back; anything else is read again from where it broke.
+      if (error instanceof ApiError) fail(error);
+      else retry();
+    }
   };
   void sync();
   return stop;

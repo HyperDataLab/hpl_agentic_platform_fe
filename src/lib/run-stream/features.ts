@@ -22,4 +22,10 @@ export const SHOW_MAP_STAGE = true;
  * Once a run finishes, its Write stage opens as a preview: the writing pipeline played on an example research record,
  * until experiments and the report come from the run itself.
  */
-export const SHOW_WRITING_PREVIEW = true;
+export const SHOW_WRITING_PREVIEW = false;
+
+/**
+ * The stages after the map that runs don't reach yet (experiment, interpret, report, write), shown as locked "coming
+ * soon" steps. Hidden: the i2h engine's plan is scope → map.
+ */
+export const SHOW_LOCKED_STAGES = false;

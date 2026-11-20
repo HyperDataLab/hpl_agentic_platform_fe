@@ -21,13 +21,9 @@ export const metadata: Metadata = {
   },
 };
 
-interface PageProps {
-  searchParams: Promise<{ view?: string | string[] }>;
-}
-
-export default async function Page({ searchParams }: PageProps) {
-  const { view } = await searchParams;
-  const activeView: FileManagerView = view === "list" ? "list" : "grid";
+// A template demo, hidden from the navigation. A static export has no query string at build time: the grid shows.
+export default function Page() {
+  const activeView = "grid" as FileManagerView;
 
   return (
     <div className="flex flex-col gap-4">

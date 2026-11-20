@@ -1,4 +1,4 @@
-import { Database, FileText, LayoutDashboard, Plug, Settings, Users, Workflow } from "lucide-react";
+import { Cpu, Database, FileText, LayoutDashboard, Plug, Settings, Users, Workflow } from "lucide-react";
 
 import { ProjectRole } from "@/types/enums";
 
@@ -54,6 +54,8 @@ export function getProjectSidebarItems(projectId: string, role: ProjectRole | nu
         ...(role === ProjectRole.ProjectManager
           ? [{ id: "project-settings", title: "Settings", url: `${baseUrl}/settings`, icon: Settings }]
           : [{ id: "project-members", title: "Members", url: `${baseUrl}/members`, icon: Users }]),
+        // The 9router endpoint, key and models runs use: kept in this browser, for every project.
+        { id: "llm-settings", title: "Language model", url: "/settings", icon: Cpu },
       ],
     },
   ];

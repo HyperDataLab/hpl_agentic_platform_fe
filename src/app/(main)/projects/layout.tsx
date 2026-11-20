@@ -1,20 +1,10 @@
+"use client";
+
 import type { ReactNode } from "react";
 
-import { redirect } from "next/navigation";
+import { AuthGate } from "@/components/auth/auth-gate";
 
-import { canAccessProjects, getRoleHomePath } from "@/lib/auth/auth-config";
-import { getAuthenticatedUser } from "@/server/auth";
-
-export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
-  const user = await getAuthenticatedUser();
-
-  if (!user) {
-    redirect("/auth/login");
-  }
-
-  if (!canAccessProjects(user.platform_role)) {
-    redirect(getRoleHomePath(user.platform_role));
-  }
-
-  return children;
+// Everything under /projects needs an account. The guard runs in the browser: a static export has no server.
+export default function Layout({ children }: Readonly<{ children: ReactNode }>) {
+  return <AuthGate>{() => children}</AuthGate>;
 }

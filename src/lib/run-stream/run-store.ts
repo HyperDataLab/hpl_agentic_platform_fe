@@ -1,7 +1,15 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 
-import { fetchRuns, type RunItem, runProblem, runTitle } from "@/lib/api/services/fetch-runs";
+import {
+  fetchRuns,
+  type RunItem,
+  type RunSources,
+  runProblem,
+  runTitle,
+  toCreateRunRequest,
+} from "@/lib/api/services/fetch-runs";
+import { toLlmPayload } from "@/lib/llm/settings";
 import { isActiveRun } from "@/lib/research-workspace";
 import { ApiError } from "@/types/api";
 import { RunStatus } from "@/types/enums";
@@ -34,7 +42,7 @@ interface RunStudioState {
   openRunId: string | null;
   openFrom: DOMRect | null;
   /** Starts a run and makes it the project's run. Resolves to the run to open, or null when none started. */
-  startRun(projectId: string, mode: ReviewMode, input: RunInput): Promise<string | null>;
+  startRun(projectId: string, mode: ReviewMode, input: RunInput, sources?: RunSources): Promise<string | null>;
   /** Shows a run from the backend. `active` makes it the project's run; otherwise it can only be opened. */
   attachRun(projectId: string, run: RunItem, active: boolean): void;
   /** Resolves to false when the answer was not recorded. */
@@ -118,18 +126,15 @@ export const useRunStudio = create<RunStudioState>()((set, get) => {
     activeRun: {},
     openRunId: null,
     openFrom: null,
-    async startRun(projectId, mode, input) {
+    async startRun(projectId, mode, input, sources) {
       try {
-        const { data: run } = await fetchRuns.create(projectId, {
-          problem: input.problem,
-          intent: input.intent,
-          context: input.context,
-          constraints: input.constraints,
-          references: input.references,
-          domains: input.domains,
-          // The Platform stops at its gates in `light` and at none in `auto`.
-          review_mode: mode === "auto" ? "auto" : "light",
-        });
+        const { currentEmail } = await import("@/lib/firebase/client");
+        const { data: run } = await fetchRuns.create(
+          projectId,
+          // The key goes to the worker with the start and is never stored there.
+          toCreateRunRequest(input, mode, toLlmPayload(), sources),
+          currentEmail() ?? "",
+        );
         get().attachRun(projectId, run, true);
         return run.id;
       } catch (error) {

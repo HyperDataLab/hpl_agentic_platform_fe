@@ -20,6 +20,7 @@ export const KNOWN_ROUTE_SEGMENTS = new Set([
   "privacy",
   "projects",
   "reviews",
+  "settings",
   "terms",
   "unauthorized",
 ]);

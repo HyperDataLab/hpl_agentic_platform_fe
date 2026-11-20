@@ -22,11 +22,13 @@ import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { RunSources } from "@/lib/api/services/fetch-runs";
 import type { GateKind, IntentKind, ReviewMode, RunInput } from "@/lib/run-stream/contract";
 import { SHOW_DATA_STAGE, SHOW_REVIEW_MODE } from "@/lib/run-stream/features";
 import { DATASET } from "@/lib/run-stream/mock/scenario";
 
 import { MODES, PIPELINE, RUN_MODES, STAGE_SHORT, STOP_INFO, stopsFor } from "./run-meta";
+import { LlmKeyNotice, SourcesInput, useRunSources } from "./run-sources";
 
 const STEPS = [
   "Your question",
@@ -555,19 +557,20 @@ export function StartRunDialog({
   onOpenChange(open: boolean): void;
   defaultMode: ReviewMode;
   /** The dialog shows the start as pending until this settles. */
-  onStart(mode: ReviewMode, input: RunInput): void | Promise<void>;
+  onStart(mode: ReviewMode, input: RunInput, sources: RunSources): void | Promise<void>;
 }) {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
   const [mode, setMode] = useState<ReviewMode>(defaultMode);
   const draft = useTopicDraft("run");
+  const [sources, setSources] = useRunSources();
   const [starting, setStarting] = useState(false);
   const start = async () => {
     const input = draft.input();
     if (!input) return;
     setStarting(true);
     try {
-      await onStart(mode, input);
+      await onStart(mode, input, sources);
     } finally {
       setStarting(false);
     }
@@ -584,6 +587,7 @@ export function StartRunDialog({
         if (next) {
           setStep(0);
           setMode(defaultMode);
+          setSources({});
           draft.reset();
         }
       }}
@@ -639,9 +643,11 @@ export function StartRunDialog({
             >
               {step === 0 && (
                 <>
+                  <LlmKeyNotice />
                   <TopicInput draft={draft} autoFocus />
                   <IntentInput draft={draft} />
                   <FieldsInput draft={draft} />
+                  <SourcesInput value={sources} onChange={setSources} />
                   <CaseDetailsInput draft={draft} />
                   <div className="flex flex-col gap-2 rounded-xl bg-muted/60 px-4 py-3.5">
                     <span className="flex items-center gap-1.5 font-medium text-sm">

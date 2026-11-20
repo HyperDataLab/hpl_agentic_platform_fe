@@ -27,7 +27,12 @@ export function NotificationBell() {
   const [tab, setTab] = useState("all");
   const titleId = useId();
   const busy = markRead.isPending || markAll.isPending || markRead.isRateLimited || markAll.isRateLimited;
-  const connectionLabels = { connected: "Live updates on", connecting: "Connecting", reconnecting: "Reconnecting" };
+  const connectionLabels = {
+    connected: "Live updates on",
+    connecting: "Connecting",
+    reconnecting: "Reconnecting",
+    offline: "Live updates off",
+  };
 
   if (!isAuthenticated) {
     return (

@@ -16,6 +16,12 @@ export const metadata: Metadata = {
   description: "Review project activity, datasets, experiments, findings, and usage.",
 };
 
+// Exported once, as `_`; Firebase serves it for every project. Admin is hidden from the navigation.
+export const dynamicParams = false;
+export function generateStaticParams() {
+  return [{ projectId: "_" }];
+}
+
 export default async function Page({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
   const project =

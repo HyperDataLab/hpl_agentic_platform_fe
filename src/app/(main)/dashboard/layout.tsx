@@ -1,15 +1,15 @@
-import type { ReactNode } from "react";
+"use client";
 
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { cn } from "cn";
 
 import { AppSidebar } from "@/app/(main)/dashboard/_components/sidebar/app-sidebar";
+import { AuthGate } from "@/components/auth/auth-gate";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { getAuthenticatedUser } from "@/server/auth";
-import { getPreference } from "@/server/server-actions";
+import type { AuthUser } from "@/lib/auth/auth-config";
+import { readPreference, readSidebarOpen } from "@/lib/preferences/client-preference";
 
 import { NotificationBell } from "../_components/notifications/notification-bell";
 import { AccountSwitcher } from "./_components/header/account-switcher";
@@ -17,18 +17,15 @@ import { LayoutControls } from "./_components/header/layout-controls";
 import { SearchDialog } from "./_components/header/search-dialog";
 import { ThemeSwitcher } from "./_components/header/theme-switcher";
 
-export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
-  const cookieStore = await cookies();
-  const defaultOpen = cookieStore.get("sidebar_state")?.value !== "false";
-  const [authenticatedUser, variant, collapsible] = await Promise.all([
-    getAuthenticatedUser(),
-    getPreference("sidebar_variant"),
-    getPreference("sidebar_collapsible"),
-  ]);
+// Template demos, hidden from the navigation. The guard and the shell run in the browser: a static export has no server.
+export default function Layout({ children }: Readonly<{ children: ReactNode }>) {
+  return <AuthGate>{(user) => <DashboardShell user={user}>{children}</DashboardShell>}</AuthGate>;
+}
 
-  if (!authenticatedUser) {
-    redirect("/auth/login");
-  }
+function DashboardShell({ user: authenticatedUser, children }: Readonly<{ user: AuthUser; children: ReactNode }>) {
+  const defaultOpen = readSidebarOpen();
+  const variant = readPreference("sidebar_variant");
+  const collapsible = readPreference("sidebar_collapsible");
 
   return (
     <SidebarProvider

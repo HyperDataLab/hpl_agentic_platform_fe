@@ -7,11 +7,7 @@ export const metadata: Metadata = {
   description: "Review and manage OpenAI Scientist research projects.",
 };
 
-interface PageProps {
-  searchParams: Promise<{ view?: string | string[] }>;
-}
-
-export default async function Page({ searchParams }: PageProps) {
-  const { view } = await searchParams;
-  return <AdminProjects activeView={view === "list" ? "list" : "grid"} />;
+// A static export has no query string at build time: the grid shows. (Admin is hidden from the navigation.)
+export default function Page() {
+  return <AdminProjects activeView="grid" />;
 }

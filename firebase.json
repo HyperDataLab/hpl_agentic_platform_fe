@@ -1,0 +1,46 @@
+{
+  "hosting": {
+    "public": "out",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "cleanUrls": true,
+    "trailingSlash": false,
+    "redirects": [{ "source": "/dashboard", "destination": "/dashboard/default", "type": 302 }],
+    "rewrites": [
+      { "source": "/projects/*/datasets/*", "destination": "/projects/_/datasets/_.html" },
+      { "source": "/projects/*/experiments", "destination": "/projects/_/experiments.html" },
+      { "source": "/projects/*/*", "destination": "/projects/_/_.html" },
+      { "source": "/projects/*", "destination": "/projects/_.html" },
+      { "source": "/admin/projects/*", "destination": "/admin/projects/_.html" },
+      { "source": "/admin/users/*", "destination": "/admin/users/_.html" }
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" },
+          { "key": "X-Content-Type-Options", "value": "nosniff" },
+          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com; frame-src https://hyperdatalab-idea2hypo.firebaseapp.com https://accounts.google.com http://127.0.0.1:9099 http://localhost:9099; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://i2h-worker.hyperdatalab.workers.dev https://paperlab-pdf-worker.hyperdatalab.workers.dev https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://www.googleapis.com https://9router.oraltest.site http://localhost:8787 http://127.0.0.1:9099 http://localhost:9099 http://127.0.0.1:8085 http://localhost:8085; img-src 'self' data: blob: https://lh3.googleusercontent.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+          }
+        ]
+      },
+      {
+        "source": "/_next/static/**",
+        "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "emulators": {
+    "auth": { "port": 9099 },
+    "firestore": { "port": 8085 },
+    "hosting": { "port": 5002 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  }
+}

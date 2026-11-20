@@ -1,16 +1,12 @@
-import { notFound, redirect } from "next/navigation";
+import { PLACEHOLDER_ID } from "@/lib/projects/project-id";
 
-import { getAuthenticatedUser } from "@/server/auth";
-import { getWorkspaceProject } from "@/server/projects";
+import { DatasetPage } from "../../_components/project-pages";
 
-import { WorkspaceSection } from "../../_components/workspace-section";
+export const dynamicParams = false;
+export function generateStaticParams() {
+  return [{ datasetId: PLACEHOLDER_ID }];
+}
 
-export default async function Page({ params }: { params: Promise<{ projectId: string; datasetId: string }> }) {
-  const { projectId, datasetId } = await params;
-  const user = await getAuthenticatedUser(projectId);
-  if (!user) redirect("/auth/login");
-  const project = await getWorkspaceProject(projectId);
-  if (!project) notFound();
-
-  return <WorkspaceSection project={project} section="dataset-detail" datasetId={datasetId} userId={user.id} />;
+export default function Page() {
+  return <DatasetPage />;
 }

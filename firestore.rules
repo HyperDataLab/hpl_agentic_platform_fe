@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// Projects and their run metadata for hyperdatalab-idea2hypo. This is the only copy of the rules.
+// Only verified @hyperdatalab.org Google accounts, and only the project's members. The run's events live in the
+// i2h-worker's Durable Object, not here. The worker reads projects/{id} with the person's own token to check access,
+// so reading a project must stay member-only.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The same rule as PaperLab, Paper Fetch Hub and the worker.
+    function lab() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('^[^@]+@hyperdatalab[.]org$');
+    }
+    function member(project) {
+      return lab() && request.auth.token.email in project.data.memberEmails;
+    }
+    function projectOf(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId));
+    }
+
+    match /projects/{projectId} {
+      allow read: if member(resource);
+      // The owner is always a member.
+      allow create: if lab()
+        && request.resource.data.ownerEmail == request.auth.token.email
+        && request.auth.token.email in request.resource.data.memberEmails;
+      // Members edit the project; only the owner changes who owns it or deletes it.
+      allow update: if member(resource)
+        && request.resource.data.ownerEmail in request.resource.data.memberEmails
+        && (request.resource.data.ownerEmail == resource.data.ownerEmail
+          || resource.data.ownerEmail == request.auth.token.email);
+      allow delete: if lab() && resource.data.ownerEmail == request.auth.token.email;
+
+      // Written by the app after the worker accepted the start; the status kept in step by the app and the worker.
+      match /runs/{runId} {
+        allow read: if member(projectOf(projectId));
+        allow create: if member(projectOf(projectId))
+          && request.resource.data.createdBy == request.auth.token.email
+          && request.resource.data.keys().hasOnly(
+            ['topic', 'review_mode', 'status', 'createdBy', 'createdAt', 'updatedAt', 'domains'])
+          && request.resource.data.keys().hasAll(['topic', 'review_mode', 'status', 'createdBy', 'createdAt'])
+          && request.resource.data.topic is string
+          && request.resource.data.review_mode in ['auto', 'light', 'copilot', 'full'];
+        allow update: if member(projectOf(projectId))
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'updatedAt', 'lastSeq', 'message']);
+        allow delete: if false;
+      }
+    }
+  }
+}
