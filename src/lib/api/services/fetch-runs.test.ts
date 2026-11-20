@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { RunStatus } from "@/types/enums";
 
-import { I2H_PIPELINE, toCreateRunRequest, toRunItem, toWorkerGateAnswer } from "./fetch-runs";
+import { runLabel, toCreateRunRequest, toRunItem, toWorkerGateAnswer } from "./fetch-runs";
 
 const llm = { base_url: "https://r.example/v1", api_key: "sk", model: "m" };
 
@@ -47,7 +47,7 @@ describe("worker run contract", () => {
     expect(toWorkerGateAnswer(answer)).toEqual(expected);
   });
 
-  it("shows a run from the worker's run list as a pipeline run", () => {
+  it("shows a run from the worker's run list as a run whose events the studio reads directly", () => {
     const record = {
       run_id: "r",
       project_id: "p",
@@ -67,7 +67,8 @@ describe("worker run contract", () => {
       id: "r",
       project_id: "p",
       status: RunStatus.Running,
-      pipeline_key: I2H_PIPELINE,
+      pipeline_key: null,
+      label: "RUN-R",
       title: "Does BM25 help?",
       case: { problem: { text: "Does BM25 help?" } },
       finished_at: null,
@@ -86,6 +87,13 @@ describe("worker run contract", () => {
       cost_usd: "0.25",
       finished_at: record.updated_at,
     });
+  });
+});
+
+describe("run labels", () => {
+  it("drops the worker's run- prefix", () => {
+    expect(runLabel("run-65660351-8022-41ef-8895-121054d53473")).toBe("RUN-6566");
+    expect(runLabel("78d5a948")).toBe("RUN-78D5");
   });
 });
 

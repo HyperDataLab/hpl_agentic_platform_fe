@@ -5,6 +5,7 @@ import {
   fetchRuns,
   type RunItem,
   type RunSources,
+  runLabel,
   runProblem,
   runTitle,
   toCreateRunRequest,
@@ -59,8 +60,6 @@ export interface Stream extends RunCommands {
   dispose(): void;
   follow?(): void;
 }
-
-const labelOf = (runId: string) => `RUN-${runId.slice(0, 4).toUpperCase()}`;
 
 // Live streams sit outside React state; only the folded state goes into the store.
 const streams = new Map<string, Stream>();
@@ -171,7 +170,7 @@ export const useRunStudio = create<RunStudioState>()((set, get) => {
         {
           runId: run.id,
           projectId,
-          label: run.label ?? labelOf(run.id),
+          label: run.label ?? runLabel(run.id),
           pipeline,
           createdAt: run.created_at,
           // What the run already says about itself, until its events arrive.

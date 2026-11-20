@@ -167,8 +167,8 @@ export interface PiConsultation {
 /** The worker's answer when it no longer has the person's key (after an engine restart). */
 export const LLM_KEY_REQUIRED = "LLM_KEY_REQUIRED";
 
-/** The pipeline the i2h engine runs: every run from the worker is one. */
-export const I2H_PIPELINE = "idea2hypothesis";
+/** A run's short label: `RUN-6566` for `run-65660351-…`. */
+export const runLabel = (runId: string) => `RUN-${runId.replace(/^run-/, "").slice(0, 4).toUpperCase()}`;
 
 const ok = <T>(data: T, total?: number): ApiResult<T> => ({
   success: true,
@@ -227,7 +227,10 @@ export function toRunItem(projectId: string, run: WorkerRun): RunItem {
     domains,
     review_mode: run.review_mode ?? null,
     last_seq: run.last_seq,
-    pipeline_key: I2H_PIPELINE,
+    label: runLabel(run.run_id),
+    // The i2h engine sends the run studio's own events (run.started, stage.started, scope.goal, …), not the old
+    // Platform's pipeline envelopes, so its runs must not go through the pipeline adapter.
+    pipeline_key: null,
     current_stage: null,
     recovery: null,
   };

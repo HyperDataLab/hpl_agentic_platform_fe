@@ -402,6 +402,9 @@ const ROW =
 
 function PastRunRow({ run }: { run: RunItem }) {
   const title = runTitle(run);
+  // i2h runs have no budget: they show what they spent.
+  const spend =
+    Number(run.budget_usd) > 0 ? `$${run.cost_usd} of $${run.budget_usd}` : `$${Number(run.cost_usd).toFixed(2)} spent`;
   return (
     <>
       <span className="font-mono font-semibold text-xs">{run.label ?? run.id.slice(0, 8)}</span>
@@ -412,7 +415,7 @@ function PastRunRow({ run }: { run: RunItem }) {
           {/* Pipeline runs count tokens, not dollars. */}
           {run.pipeline_key
             ? `${compactNumber(run.tokens_used ?? 0)} of ${compactNumber(run.token_budget ?? 0)} tokens`
-            : `$${run.cost_usd} of $${run.budget_usd}`}{" "}
+            : spend}{" "}
           ·{" "}
           {run.pipeline_key
             ? INTENT_LINE[run.case?.intent.kind ?? "test"]
