@@ -19,6 +19,7 @@ import { type AuthUser, canCreateProject } from "@/lib/auth/auth-config";
 import { readPreference, readSidebarOpen } from "@/lib/preferences/client-preference";
 import { ApiError } from "@/types/api";
 
+import { LlmSettingsButton } from "../../../_components/llm-settings-button";
 import { AccountSwitcher } from "../../../dashboard/_components/header/account-switcher";
 import { LayoutControls } from "../../../dashboard/_components/header/layout-controls";
 import { ThemeSwitcher } from "../../../dashboard/_components/header/theme-switcher";
@@ -127,6 +128,7 @@ export function ProjectShell({ children }: Readonly<{ children: ReactNode }>) {
                 <span className="truncate font-medium text-sm">{project.name}</span>
               </div>
               <div className="flex items-center gap-2">
+                <LlmSettingsButton />
                 <LayoutControls />
                 <ThemeSwitcher />
                 <AccountSwitcher

@@ -2,16 +2,14 @@ import type { ReactNode } from "react";
 
 import Link from "next/link";
 
-import { Cpu } from "lucide-react";
-
 import { BrandMark } from "@/components/brand-mark";
-import { Button } from "@/components/ui/button";
 import { APP_CONFIG } from "@/config/app-config";
 import type { AuthUser } from "@/lib/auth/auth-config";
 
 import { AccountSwitcher } from "../dashboard/_components/header/account-switcher";
 import { LayoutControls } from "../dashboard/_components/header/layout-controls";
 import { ThemeSwitcher } from "../dashboard/_components/header/theme-switcher";
+import { LlmSettingsButton } from "./llm-settings-button";
 import { NotificationBell } from "./notifications/notification-bell";
 
 export function TopBarShell({
@@ -33,11 +31,7 @@ export function TopBarShell({
           </Link>
           <div className="flex items-center gap-2">
             <NotificationBell />
-            <Button asChild variant="ghost" size="icon" aria-label="Language model settings">
-              <Link prefetch={false} href="/settings">
-                <Cpu aria-hidden="true" />
-              </Link>
-            </Button>
+            <LlmSettingsButton />
             <LayoutControls />
             <ThemeSwitcher />
             <AccountSwitcher
