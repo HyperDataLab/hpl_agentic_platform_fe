@@ -97,7 +97,7 @@ export function AvatarEditor({
         onClick={() => inputRef.current?.click()}
       >
         <Avatar className="size-20">
-          <AvatarImage src={preview ?? resolveAvatarUrl(avatarUrl)} alt={name} crossOrigin="use-credentials" />
+          <AvatarImage src={preview ?? resolveAvatarUrl(avatarUrl)} alt={name} />
           <AvatarFallback>{getInitials(name)}</AvatarFallback>
         </Avatar>
         <span className="absolute right-0 bottom-0 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground ring-2 ring-background">

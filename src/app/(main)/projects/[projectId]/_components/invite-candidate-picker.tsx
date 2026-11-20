@@ -108,11 +108,7 @@ export function InviteCandidatePicker({
                     )}
                   >
                     <Avatar>
-                      <AvatarImage
-                        src={resolveAvatarUrl(user.avatar_url)}
-                        alt={user.display_name ?? user.email}
-                        crossOrigin="use-credentials"
-                      />
+                      <AvatarImage src={resolveAvatarUrl(user.avatar_url)} alt={user.display_name ?? user.email} />
                       <AvatarFallback>{getInitials(user.display_name ?? user.email)}</AvatarFallback>
                     </Avatar>
                     <div className="flex min-w-0 flex-1 flex-col gap-1">

@@ -25,7 +25,7 @@ export function MemberIdentity({ member, you, owner }: { member: ProjectMemberIt
   return (
     <div className="flex min-w-0 items-center gap-3">
       <Avatar className="size-9">
-        <AvatarImage src={resolveAvatarUrl(member.avatar_url)} alt="" crossOrigin="use-credentials" />
+        <AvatarImage src={resolveAvatarUrl(member.avatar_url)} alt="" />
         <AvatarFallback>{getInitials(name)}</AvatarFallback>
       </Avatar>
       <div className="flex min-w-0 flex-col">

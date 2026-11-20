@@ -39,11 +39,7 @@ export function ProjectInvitationCard({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex min-w-0 items-center gap-2">
             <Avatar>
-              <AvatarImage
-                src={resolveAvatarUrl(invitation.invited_by_avatar_url)}
-                alt={inviter}
-                crossOrigin="use-credentials"
-              />
+              <AvatarImage src={resolveAvatarUrl(invitation.invited_by_avatar_url)} alt={inviter} />
               <AvatarFallback>{getInitials(inviter)}</AvatarFallback>
             </Avatar>
             <p className="min-w-0 wrap-anywhere text-muted-foreground text-xs">

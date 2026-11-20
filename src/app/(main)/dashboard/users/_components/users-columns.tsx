@@ -149,7 +149,7 @@ export function AvatarCell({
 
   return (
     <Avatar size="lg" className={cn("font-medium", getAvatarTone(name))}>
-      <AvatarImage src={resolveAvatarUrl(avatarUrl)} alt={name} crossOrigin="use-credentials" />
+      <AvatarImage src={resolveAvatarUrl(avatarUrl)} alt={name} />
       <AvatarFallback>{getInitials(name)}</AvatarFallback>
       {badge && <AvatarBadge className={badge.className}>{BadgeIcon ? <BadgeIcon /> : null}</AvatarBadge>}
     </Avatar>
