@@ -39,7 +39,7 @@ export function MemberDirectoryTable({
                 <TableCell className="whitespace-normal p-4">
                   <div className="flex min-w-0 items-start gap-3 sm:items-center">
                     <Avatar>
-                      <AvatarImage src={resolveAvatarUrl(member.avatar_url)} alt="" crossOrigin="use-credentials" />
+                      <AvatarImage src={resolveAvatarUrl(member.avatar_url)} alt="" />
                       <AvatarFallback>{getInitials(name)}</AvatarFallback>
                     </Avatar>
                     <div className="flex min-w-0 flex-col gap-1">

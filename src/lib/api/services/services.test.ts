@@ -45,22 +45,6 @@ const contracts: Contract[] = [
     call: () => fetchMembers.resendInvite(p, "member/1"),
   },
   {
-    name: "list my project invitations",
-    method: "get",
-    url: "/invitations",
-    call: () => fetchInvitations.getList(list, signal),
-    params: list,
-    signal,
-  },
-  {
-    name: "search project invitations before pagination",
-    method: "get",
-    url: "/invitations",
-    call: () => fetchInvitations.getList({ q: "demo manager", ...list }, signal),
-    params: { q: "demo manager", ...list },
-    signal,
-  },
-  {
     name: "accept project invitation",
     method: "post",
     url: "/invitations/member%2F1/accept",

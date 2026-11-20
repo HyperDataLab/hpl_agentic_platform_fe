@@ -56,11 +56,7 @@ export function AccountSwitcher({
             className="rounded-lg focus-visible:outline-2 focus-visible:outline-ring"
           >
             <Avatar className="size-8 rounded-lg">
-              <AvatarImage
-                src={resolveAvatarUrl(activeUser.avatar)}
-                alt={activeUser.name}
-                crossOrigin="use-credentials"
-              />
+              <AvatarImage src={resolveAvatarUrl(activeUser.avatar)} alt={activeUser.name} />
               <AvatarFallback className="text-foreground">{getInitials(activeUser.name)}</AvatarFallback>
             </Avatar>
           </button>
@@ -75,7 +71,7 @@ export function AccountSwitcher({
               >
                 <div className="flex w-full items-center gap-2 px-1 py-1.5">
                   <Avatar className="size-9 rounded-lg">
-                    <AvatarImage src={resolveAvatarUrl(user.avatar)} alt={user.name} crossOrigin="use-credentials" />
+                    <AvatarImage src={resolveAvatarUrl(user.avatar)} alt={user.name} />
                     <AvatarFallback className="text-foreground">{getInitials(user.name)}</AvatarFallback>
                   </Avatar>
                   <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">

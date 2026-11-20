@@ -218,11 +218,7 @@ export function WorkspaceActivity({ projectId, timezone }: { projectId: string; 
                   return (
                     <li key={event.id} className="flex items-start gap-3 py-4 first:pt-0 last:pb-0">
                       <Avatar className="size-9 shrink-0">
-                        <AvatarImage
-                          src={resolveAvatarUrl(event.actor.avatar_url)}
-                          alt=""
-                          crossOrigin="use-credentials"
-                        />
+                        <AvatarImage src={resolveAvatarUrl(event.actor.avatar_url)} alt="" />
                         <AvatarFallback>{getInitials(event.actor.display_name)}</AvatarFallback>
                       </Avatar>
                       <div className="flex min-w-0 flex-1 flex-col gap-1">

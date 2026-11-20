@@ -32,7 +32,7 @@ function MemberProfile({ member, owner, you }: { member: ProjectMemberItem; owne
       <CardHeader className="gap-3">
         <div className="flex items-start justify-between gap-3">
           <Avatar className="size-14">
-            <AvatarImage src={resolveAvatarUrl(member.avatar_url)} alt="" crossOrigin="use-credentials" />
+            <AvatarImage src={resolveAvatarUrl(member.avatar_url)} alt="" />
             <AvatarFallback>{getInitials(name)}</AvatarFallback>
           </Avatar>
           <div className="flex flex-wrap justify-end gap-1.5">

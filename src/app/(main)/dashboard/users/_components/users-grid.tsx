@@ -97,7 +97,7 @@ export function UsersGrid({
             <CardContent className="flex flex-col gap-4">
               <div className="flex items-start gap-3">
                 <Avatar size="lg" className={cn("size-12 font-medium", getAvatarTone(user.name))}>
-                  <AvatarImage src={resolveAvatarUrl(user.avatar_url)} alt={user.name} crossOrigin="use-credentials" />
+                  <AvatarImage src={resolveAvatarUrl(user.avatar_url)} alt={user.name} />
                   <AvatarFallback>{getInitials(user.name)}</AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">

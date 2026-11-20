@@ -20,10 +20,16 @@ export interface InvitationListParams extends ListParams {
   q?: string;
 }
 export const fetchInvitations = {
-  getList: async (params?: InvitationListParams, signal?: AbortSignal): Promise<ApiResult<InvitationItem[]>> => {
-    const response = await apiService.get<ApiResult<InvitationItem[]>>("/invitations", params, { signal });
-    return response.data;
-  },
+  /**
+   * The i2h-worker has no invitations: a project's owner adds lab accounts as members directly. The list is always
+   * empty, so the projects page shows none instead of failing on a route the worker doesn't have.
+   */
+  getList: async (_params?: InvitationListParams, _signal?: AbortSignal): Promise<ApiResult<InvitationItem[]>> => ({
+    success: true,
+    message: "OK",
+    data: [],
+    meta: { request_id: "", pagination: { total: 0, limit: 0, offset: 0 } },
+  }),
   answer: async (id: string, action: "accept" | "decline"): Promise<ApiResult<InvitationItem>> => {
     const response = await apiService.post<ApiResult<InvitationItem>>(
       `/invitations/${encodeURIComponent(id)}/${action}`,
