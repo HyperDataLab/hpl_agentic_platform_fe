@@ -48,16 +48,6 @@ export function revisionFindings(
   return findings;
 }
 
-/** A run lifecycle, as the studio's events say it, as a run status. */
-const STATUS_OF: Record<string, RunStatus> = {
-  running: RunStatus.Running,
-  paused: RunStatus.Paused,
-  awaiting_review: RunStatus.AwaitingReview,
-  completed: RunStatus.Completed,
-  failed: RunStatus.Failed,
-  stopped: RunStatus.Stopped,
-};
-
 const showError = (error: unknown) =>
   toast.error(error instanceof Error ? error.message : "Something went wrong. Please try again.");
 
@@ -74,9 +64,6 @@ export class ApiRun implements RunCommands {
   private following = false;
   /** The last stored event read, so the stream can be picked up again after it. */
   private lastSeq = 0;
-  /** The status last written to the run's document. */
-  private recorded: RunStatus | null = null;
-
   constructor(
     private readonly projectId: string,
     private readonly runId: string,
@@ -118,32 +105,13 @@ export class ApiRun implements RunCommands {
             return;
           }
           this.following = true;
-          const shown = this.adapt(events);
-          this.record(shown);
-          this.pacer.push(shown);
+          this.pacer.push(this.adapt(events));
         },
         onEnded: () => void this.settle(),
         onSessionEnded: () => window.dispatchEvent(new Event("auth:expired")),
         onError: showError,
       },
     );
-  }
-
-  /** Keeps the run's Firestore document in step with the status its live events report, so the list shows it. */
-  private record(events: RunEvent[]) {
-    let status: RunStatus | null = null;
-    for (const event of events) {
-      if (event.type === "run.completed") status = RunStatus.Completed;
-      else if (event.type === "run.status") {
-        const next = event.payload.stopped ? "stopped" : event.payload.status;
-        status = STATUS_OF[next] ?? status;
-      }
-    }
-    if (!status || status === this.recorded) return;
-    this.recorded = status;
-    fetchRuns.recordStatus(this.projectId, this.runId, status).catch(() => {
-      // The list catches up the next time the run is opened.
-    });
   }
 
   /** Every event has been read. A Popper run's last events say how it ended; a pipeline run's may not, so it is asked. */

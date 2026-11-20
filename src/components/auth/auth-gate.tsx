@@ -25,7 +25,7 @@ export function loginUrl(pathname: string, search: string) {
 /**
  * The client-side guard for pages that need an account: a static export has no server to check the session first.
  * Until Firebase has restored the session it shows `fallback`; signed out, it sends the browser to the login page.
- * Firestore rules and the worker enforce access either way: this only decides what to show.
+ * The worker enforces access either way: this only decides what to show.
  */
 export function AuthGate({
   children,

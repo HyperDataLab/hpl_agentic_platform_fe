@@ -2,7 +2,7 @@ import { ApiError, type ApiResult } from "@/types/api";
 import { ProjectRole, ProjectStatus } from "@/types/enums";
 
 import type { ListParams } from "../types";
-import { firestoreProjects, type ProjectDoc } from "./firestore-store";
+import { type WorkerProject, workerProjects } from "./worker-store";
 
 export { ProjectStatus } from "@/types/enums";
 
@@ -53,27 +53,27 @@ function roleOf(owner: boolean, member: boolean) {
   return member ? ProjectRole.Researcher : null;
 }
 
-/** A project as the app shows it, from its Firestore document. The owner manages it; other members research. */
-export function toProjectItem(id: string, project: ProjectDoc, email: string | null): ProjectItem {
+/** A project as the app shows it, from the worker's record. The owner manages it; other members research. */
+export function toProjectItem(project: WorkerProject, email: string | null): ProjectItem {
   const me = email?.toLowerCase() ?? "";
-  const owner = project.ownerEmail.toLowerCase() === me;
-  const member = project.memberEmails.some((item) => item.toLowerCase() === me);
+  const owner = project.owner_email.toLowerCase() === me;
+  const member = project.member_emails.some((item) => item.toLowerCase() === me);
   return {
-    id,
+    id: project.id,
     name: project.name,
     description: project.description || null,
     domain: null,
     objective: null,
     tags: [],
-    status:
-      project.status && STATUSES.has(project.status) ? (project.status as ProjectStatus) : ProjectStatus.Researching,
-    owner_user_id: project.ownerEmail,
+    status: STATUSES.has(project.status) ? (project.status as ProjectStatus) : ProjectStatus.Researching,
+    owner_user_id: project.owner_email,
     my_role: roleOf(owner, member),
-    created_at: project.createdAt,
-    updated_at: project.updatedAt,
+    created_at: project.created_at,
+    updated_at: project.updated_at,
   };
 }
 
+/** The signed-in account's email: the worker keeps members by email. */
 async function me() {
   const { currentEmail, getIdToken } = await import("@/lib/firebase/client");
   await getIdToken();
@@ -82,55 +82,44 @@ async function me() {
   return email;
 }
 
-async function byId(id: string): Promise<ProjectDetailResponse> {
-  const email = await me();
-  const project = await firestoreProjects.get(id);
-  if (!project) throw new ApiError(404, "NOT_FOUND", "This project no longer exists.");
-  return ok(toProjectItem(id, project, email));
-}
+const shown = async (project: WorkerProject) => ok(toProjectItem(project, await me()));
+const setStatus = async (id: string, status: WorkerProject["status"]) =>
+  shown(await workerProjects.update(id, { status }));
 
-async function setStatus(id: string, status: ProjectStatus) {
-  await firestoreProjects.update(id, { status });
-  return byId(id);
-}
-
-/** Projects live in Firestore (`projects/{id}`); members are listed by email in `memberEmails`. */
+/** Projects and their members are kept by the i2h-worker in Cloudflare D1; a project is reached by its members only. */
 export const fetchProject = {
-  transferOwnership: async (id: string, newOwnerEmail: string): Promise<ProjectDetailResponse> => {
-    await firestoreProjects.update(id, { ownerEmail: newOwnerEmail });
-    return byId(id);
-  },
+  transferOwnership: async (id: string, newOwnerEmail: string): Promise<ProjectDetailResponse> =>
+    shown(await workerProjects.update(id, { owner_email: newOwnerEmail })),
   remove: async (id: string): Promise<ApiResult<null>> => {
-    await firestoreProjects.remove(id);
+    await workerProjects.remove(id);
     return ok(null);
   },
   /** Every project the account belongs to: there are few, so there is one page. */
-  getList: async (params?: ProjectListParams, _signal?: AbortSignal): Promise<ProjectListResponse> => {
-    const email = await me();
-    const projects = (await firestoreProjects.list(email))
-      .map(({ id, doc }) => toProjectItem(id, doc, email))
+  getList: async (params?: ProjectListParams, signal?: AbortSignal): Promise<ProjectListResponse> => {
+    const [email, list] = await Promise.all([me(), workerProjects.list(signal)]);
+    const projects = list
+      .map((project) => toProjectItem(project, email))
       .filter((project) => (params?.include_archived ?? false) || project.status !== ProjectStatus.Archived);
     return ok(projects, projects.length);
   },
-  getById: async (id: string, _signal?: AbortSignal): Promise<ProjectDetailResponse> => byId(id),
-  create: async (data: CreateProjectRequest): Promise<ProjectDetailResponse> => {
-    const email = await me();
-    const id = await firestoreProjects.create({
-      name: data.name.trim(),
-      description: data.description?.trim() ?? "",
-      ownerEmail: email,
-    });
-    return byId(id);
-  },
-  update: async (id: string, data: UpdateProjectRequest): Promise<ProjectDetailResponse> => {
-    await firestoreProjects.update(id, {
-      ...(data.name !== undefined ? { name: data.name.trim() } : {}),
-      ...(data.description !== undefined ? { description: data.description?.trim() ?? "" } : {}),
-    });
-    return byId(id);
-  },
-  archive: (id: string) => setStatus(id, ProjectStatus.Archived),
-  restore: (id: string) => setStatus(id, ProjectStatus.Researching),
-  complete: (id: string) => setStatus(id, ProjectStatus.Completed),
-  reopen: (id: string) => setStatus(id, ProjectStatus.Researching),
+  getById: async (id: string, signal?: AbortSignal): Promise<ProjectDetailResponse> =>
+    shown(await workerProjects.get(id, signal)),
+  create: async (data: CreateProjectRequest): Promise<ProjectDetailResponse> =>
+    shown(await workerProjects.create({ name: data.name.trim(), description: data.description?.trim() ?? "" })),
+  update: async (id: string, data: UpdateProjectRequest): Promise<ProjectDetailResponse> =>
+    shown(
+      await workerProjects.update(id, {
+        ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+        ...(data.description !== undefined ? { description: data.description?.trim() ?? "" } : {}),
+      }),
+    ),
+  /** Adds a lab account to the project (owner only). */
+  addMember: async (id: string, email: string): Promise<ProjectDetailResponse> =>
+    shown(await workerProjects.addMember(id, email)),
+  removeMember: async (id: string, email: string): Promise<ProjectDetailResponse> =>
+    shown(await workerProjects.removeMember(id, email)),
+  archive: (id: string) => setStatus(id, "archived"),
+  restore: (id: string) => setStatus(id, "researching"),
+  complete: (id: string) => setStatus(id, "completed"),
+  reopen: (id: string) => setStatus(id, "researching"),
 };

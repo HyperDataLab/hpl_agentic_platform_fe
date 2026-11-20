@@ -25,7 +25,7 @@ function Reviews({ user }: { user: AuthUser }) {
   );
 }
 
-/** The review queue, for reviewers of some project. Firestore projects have no reviewers yet, so it sends people on. */
+/** The review queue, for reviewers of some project. Projects have no reviewers yet, so it sends people on. */
 export function ReviewsPage() {
   return <AuthGate>{(user) => <Reviews user={user} />}</AuthGate>;
 }

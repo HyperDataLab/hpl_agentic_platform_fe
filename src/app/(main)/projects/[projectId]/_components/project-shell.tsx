@@ -34,7 +34,7 @@ interface ProjectContextValue {
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
 
-/** The project the page is in, read from Firestore by the layout, and the signed-in account. */
+/** The project the page is in, read from the worker by the layout, and the signed-in account. */
 export function useWorkspaceProject() {
   const value = useContext(ProjectContext);
   if (!value) throw new Error("useWorkspaceProject must be used inside a project page.");
@@ -59,7 +59,7 @@ function ProjectMissing({ title, text }: { title: string; text: string }) {
 
 /**
  * A project's frame: its sidebar, header and run studio. The static export has one page for every project (`_`), so
- * the project comes from the URL and Firestore in the browser.
+ * the project comes from the URL, and its record from the worker, in the browser.
  */
 export function ProjectShell({ children }: Readonly<{ children: ReactNode }>) {
   const router = useRouter();
