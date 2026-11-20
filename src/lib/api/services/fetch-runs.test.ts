@@ -47,16 +47,22 @@ describe("worker run contract", () => {
     expect(toWorkerGateAnswer(answer)).toEqual(expected);
   });
 
-  it("shows a Firestore run as a pipeline run, with the worker's status when known", () => {
-    const doc = {
+  it("shows a run from the worker's run list as a pipeline run", () => {
+    const record = {
+      run_id: "r",
+      project_id: "p",
       topic: "Does BM25 help?",
       review_mode: "light" as const,
+      domains: ["IR"],
       status: "running",
-      createdBy: "a@hyperdatalab.org",
-      createdAt: "2026-11-19T00:00:00.000Z",
-      updatedAt: "2026-11-19T00:01:00.000Z",
+      message: null,
+      last_seq: 3,
+      cost_usd: null,
+      created_by: "a@hyperdatalab.org",
+      created_at: "2026-11-19T00:00:00.000Z",
+      updated_at: "2026-11-19T00:01:00.000Z",
     };
-    const listed = toRunItem("p", "r", doc);
+    const listed = toRunItem("p", record);
     expect(listed).toMatchObject({
       id: "r",
       project_id: "p",
@@ -66,11 +72,11 @@ describe("worker run contract", () => {
       case: { problem: { text: "Does BM25 help?" } },
       finished_at: null,
     });
-    const failed = toRunItem("p", "r", doc, {
-      run_id: "r",
+    const failed = toRunItem("p", {
+      ...record,
       status: "failed",
       last_seq: 40,
-      cost_usd: 0.25,
+      cost_usd: "0.25",
       message: "LLM refused",
     });
     expect(failed).toMatchObject({
@@ -78,7 +84,7 @@ describe("worker run contract", () => {
       failure_message: "LLM refused",
       last_seq: 40,
       cost_usd: "0.25",
-      finished_at: doc.updatedAt,
+      finished_at: record.updated_at,
     });
   });
 });

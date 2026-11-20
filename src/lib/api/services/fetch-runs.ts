@@ -6,7 +6,7 @@ import { RunStatus } from "@/types/enums";
 import apiService from "../core";
 import { projectPath, runPath } from "../request";
 import type { ListParams } from "../types";
-import { firestoreRuns, type RunDoc } from "./firestore-store";
+import { type WorkerRun, workerRuns } from "./worker-store";
 
 export { RunStatus } from "@/types/enums";
 
@@ -188,41 +188,45 @@ export function toRunStatus(status: string | null | undefined): RunStatus {
   return status && STATUSES.has(status) ? (status as RunStatus) : RunStatus.Queued;
 }
 
-/** A run as the app shows it: its Firestore document, with what the worker says about it when known. */
-export function toRunItem(projectId: string, id: string, doc: RunDoc, state?: RunState): RunItem {
-  const status = toRunStatus(state?.status ?? doc.status);
+/** A run as the app shows it, from the worker's run list (D1) or its live state. */
+export function toRunItem(projectId: string, run: WorkerRun): RunItem {
+  const status = toRunStatus(run.status);
   const finished = [RunStatus.Completed, RunStatus.Failed, RunStatus.Stopped].includes(status);
+  const topic = run.topic ?? "";
+  const domains = run.domains ?? [];
+  const created = run.created_at ?? new Date().toISOString();
+  const updated = run.updated_at ?? created;
   return {
-    id,
-    project_id: projectId,
+    id: run.run_id,
+    project_id: run.project_id ?? projectId,
     dataset_id: null,
     dataset_version_id: null,
     dataset_version_number: null,
-    created_by_user_id: doc.createdBy,
+    created_by_user_id: run.created_by ?? "",
     status,
-    auto_review: doc.review_mode === "auto",
+    auto_review: run.review_mode === "auto",
     budget_usd: "0",
-    cost_usd: String(state?.cost_usd ?? 0),
-    failure_message: status === RunStatus.Failed ? (state?.message ?? null) : null,
-    created_at: doc.createdAt,
-    started_at: doc.createdAt,
-    finished_at: finished ? doc.updatedAt : null,
-    updated_at: doc.updatedAt,
-    title: doc.topic,
+    cost_usd: String(run.cost_usd ?? 0),
+    failure_message: status === RunStatus.Failed ? (run.message ?? null) : null,
+    created_at: created,
+    started_at: created,
+    finished_at: finished ? updated : null,
+    updated_at: updated,
+    title: topic,
     case: {
       version: 1,
       status: "settled",
-      intent: { kind: "explain", text: doc.topic },
-      problem: { text: doc.topic, source: "researcher" },
+      intent: { kind: "explain", text: topic },
+      problem: { text: topic, source: "researcher" },
       context: "",
       constraints: [],
       references: [],
-      domains: doc.domains ?? [],
+      domains,
       dataset_version_id: null,
     },
-    domains: doc.domains ?? [],
-    review_mode: doc.review_mode,
-    ...(state ? { last_seq: state.last_seq } : {}),
+    domains,
+    review_mode: run.review_mode ?? null,
+    last_seq: run.last_seq,
     pipeline_key: I2H_PIPELINE,
     current_stage: null,
     recovery: null,
@@ -267,16 +271,9 @@ async function getState(projectId: string, runId: string, signal?: AbortSignal):
   return response.data;
 }
 
+/** The run's live state with its record; reading it also brings the run list (D1) up to date. */
 async function detail(projectId: string, runId: string, signal?: AbortSignal): Promise<RunDetailResponse> {
-  const [doc, state] = await Promise.all([firestoreRuns.get(projectId, runId), getState(projectId, runId, signal)]);
-  if (!doc) throw new ApiError(404, "NOT_FOUND", "This run no longer exists.");
-  // The worker is the run's truth; the document keeps the list in step for everyone else.
-  if (state.status !== doc.status) {
-    firestoreRuns.setStatus(projectId, runId, state.status).catch(() => {
-      // Shown from the worker either way; the list catches up on the next read.
-    });
-  }
-  return ok(toRunItem(projectId, runId, doc, state));
+  return ok(toRunItem(projectId, await workerRuns.get(projectId, runId, signal)));
 }
 
 async function control(projectId: string, runId: string, action: "pause" | "cancel" | "resume", body?: unknown) {
@@ -285,33 +282,36 @@ async function control(projectId: string, runId: string, action: "pause" | "canc
 }
 
 export const fetchRuns = {
-  /** The project's runs, newest first, from Firestore. */
-  getList: async (projectId: string, params?: ListParams, _signal?: AbortSignal): Promise<RunListResponse> => {
-    const runs = await firestoreRuns.list(projectId, params?.limit);
+  /** The project's runs, newest first, from the worker's run list. */
+  getList: async (projectId: string, params?: ListParams, signal?: AbortSignal): Promise<RunListResponse> => {
+    const runs = await workerRuns.list(projectId, params?.limit, signal);
     return ok(
-      runs.map(({ id, doc }) => toRunItem(projectId, id, doc)),
+      runs.map((run) => toRunItem(projectId, run)),
       runs.length,
     );
   },
   getById: detail,
   /** The worker's view of a run: status, last event and cost. */
   getState,
-  /** Starts a run on the worker, then records it in Firestore so the project lists it. */
+  /** Starts a run on the worker, which also adds it to the project's run list. */
   create: async (projectId: string, data: CreateRunRequest, createdBy: string): Promise<RunDetailResponse> => {
     const response = await apiService.post<{ run_id: string; status: string }>(`${projectPath(projectId)}/runs`, data);
-    const { run_id: runId, status } = response.data;
-    const doc = await firestoreRuns.create(projectId, runId, {
-      topic: data.topic,
-      review_mode: data.review_mode,
-      status: toRunStatus(status),
-      createdBy,
-      domains: data.domains ?? [],
-    });
-    return ok(toRunItem(projectId, runId, doc));
+    const now = new Date().toISOString();
+    return ok(
+      toRunItem(projectId, {
+        run_id: response.data.run_id,
+        status: response.data.status,
+        topic: data.topic,
+        review_mode: data.review_mode,
+        domains: data.domains ?? [],
+        created_by: createdBy,
+        created_at: now,
+        updated_at: now,
+        last_seq: 0,
+        cost_usd: null,
+      }),
+    );
   },
-  /** Keeps the run's document in step with a status the stream reported. */
-  recordStatus: (projectId: string, runId: string, status: RunStatus) =>
-    firestoreRuns.setStatus(projectId, runId, status),
   /** Asks the worker where the run is: for a run that looks stuck. */
   sync: (projectId: string, runId: string) => detail(projectId, runId),
   /** Cancels the run; it ends as stopped. */
