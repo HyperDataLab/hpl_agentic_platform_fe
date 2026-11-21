@@ -21,10 +21,19 @@ export interface RunSources {
   fulltext?: boolean;
 }
 
+/** What the researcher said beyond the topic. Optional: old clients and old runs have none. */
+export interface RunCase {
+  intent: { kind: IntentKind; text: string };
+  context?: string;
+  constraints?: string[];
+  references?: { citation: string }[];
+}
+
 /** The body of the worker's `POST /v1/projects/:p/runs`. */
 export interface CreateRunRequest {
   topic: string;
   domains?: string[];
+  case?: RunCase;
   review_mode: ReviewMode;
   budget_usd?: number;
   llm: {
@@ -250,6 +259,26 @@ export function toWorkerGateAnswer(answer: GateAnswer): WorkerGateAnswer {
   };
 }
 
+/**
+ * The researcher's case from the run studio's input. Empty parts are left out; null when the intent text is shorter
+ * than the 12 characters the worker accepts (the dialog does not let that through).
+ */
+export function toRunCase(input: RunInput): RunCase | null {
+  const text = input.intent.text.trim();
+  if (text.length < 12) return null;
+  const context = input.context?.trim();
+  const constraints = (input.constraints ?? []).map((line) => line.trim()).filter(Boolean);
+  const references = (input.references ?? [])
+    .map((ref) => ({ citation: ref.citation.trim() }))
+    .filter((ref) => ref.citation);
+  return {
+    intent: { kind: input.intent.kind, text },
+    ...(context ? { context } : {}),
+    ...(constraints.length ? { constraints } : {}),
+    ...(references.length ? { references } : {}),
+  };
+}
+
 /** The body of a start: the run studio's input, the language model and the sources. */
 export function toCreateRunRequest(
   input: RunInput,
@@ -259,9 +288,11 @@ export function toCreateRunRequest(
   budgetUsd?: number,
 ): CreateRunRequest {
   const chosen = Object.entries(sources ?? {}).filter(([, value]) => value !== undefined && value !== false);
+  const runCase = toRunCase(input);
   return {
     topic: input.problem.trim(),
     ...(input.domains.length ? { domains: input.domains } : {}),
+    ...(runCase ? { case: runCase } : {}),
     review_mode: mode,
     ...(budgetUsd ? { budget_usd: budgetUsd } : {}),
     llm,

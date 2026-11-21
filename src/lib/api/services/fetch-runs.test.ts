@@ -31,6 +31,40 @@ describe("worker run contract", () => {
     });
   });
 
+  it("sends the case, trimmed and without its empty parts", () => {
+    const body = toCreateRunRequest(
+      {
+        problem: "Does spaced practice beat massed practice?",
+        intent: { kind: "compare", text: "  Compare spaced and massed practice  " },
+        context: "  Second-year students ",
+        constraints: ["Only public data", "  "],
+        references: [{ citation: " Cepeda 2006 " }],
+        domains: [],
+      },
+      "copilot",
+      llm,
+    );
+    expect(body.case).toEqual({
+      intent: { kind: "compare", text: "Compare spaced and massed practice" },
+      context: "Second-year students",
+      constraints: ["Only public data"],
+      references: [{ citation: "Cepeda 2006" }],
+    });
+    const minimal = toCreateRunRequest(
+      {
+        problem: "Does spaced practice beat massed practice?",
+        intent: { kind: "test", text: "Test whether spacing helps" },
+        context: " ",
+        constraints: [],
+        references: [],
+        domains: [],
+      },
+      "auto",
+      llm,
+    );
+    expect(minimal.case).toEqual({ intent: { kind: "test", text: "Test whether spacing helps" } });
+  });
+
   it.each([
     [{ option_id: "approve" }, { option_id: "approve" }],
     [
