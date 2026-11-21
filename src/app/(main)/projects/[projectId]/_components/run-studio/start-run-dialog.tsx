@@ -1,7 +1,8 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ArrowRight, Check, ChevronRight, Flag, Info, Play, Plus, Sparkles, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -22,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { classifyTopic, MAX_CLASSIFY_CHARS, MIN_CLASSIFY_CHARS } from "@/lib/api/services/fetch-bank";
 import type { RunSources } from "@/lib/api/services/fetch-runs";
 import type { GateKind, IntentKind, ReviewMode, RunInput } from "@/lib/run-stream/contract";
 import { SHOW_DATA_STAGE, SHOW_REVIEW_MODE } from "@/lib/run-stream/features";
@@ -54,6 +56,7 @@ function suggestFields(topic: string) {
 
 // The backend's limits for a research case.
 const MIN_TOPIC = 12;
+const SUGGEST_DELAY_MS = 800;
 const MAX_TOPIC = 2000;
 const MAX_FIELDS = 6;
 const MIN_INTENT = 12;
@@ -74,6 +77,13 @@ export const INTENT_CLAIM_TYPES: Record<(typeof INTENTS)[number]["kind"], readon
   test: ["ct.causal", "ct.correlational", "ct.predictive", "ct.generalisation"],
   compare: ["ct.comparative", "ct.methodological"],
   explain: ["ct.mechanistic", "ct.causal"],
+};
+
+/** The Writing Bank framing types (objective, research question, hypothesis) related to each kind of run. */
+export const INTENT_FRAMINGS: Record<(typeof INTENTS)[number]["kind"], readonly string[]> = {
+  test: ["fr.objective-evaluate", "fr.question-causal", "fr.question-relational", "fr.hypothesis-directional"],
+  compare: ["fr.objective-compare", "fr.question-comparative", "fr.hypothesis-cs-performance"],
+  explain: ["fr.objective-explain", "fr.question-causal", "fr.question-exploratory"],
 };
 
 const lines = (text: string) =>
@@ -222,6 +232,33 @@ export function useTopicDraft(prefix: string) {
   };
   const missing = (Object.keys(short) as Need[]).filter((need) => short[need]);
   const fields = [...new Set([...suggestFields(topic).filter((f) => !removed.includes(f)), ...added])];
+  // Fields suggested by the bank from the topic, once typing has paused. A late answer for an older topic is never used.
+  const [settled, setSettled] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(topic.trim()), SUGGEST_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [topic]);
+  const classified = useQuery({
+    queryKey: ["writing-bank", "classify", settled],
+    queryFn: () => classifyTopic(settled),
+    enabled: settled.length >= MIN_CLASSIFY_CHARS && settled.length <= MAX_CLASSIFY_CHARS,
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+  const current = settled === topic.trim() ? classified.data : null;
+  const bankSuggestions = [
+    ...new Map(
+      (current ?? [])
+        .flatMap((item) => [item.subfield.name, item.topic.name])
+        .filter((name) => name.length >= 2 && name.length <= 60)
+        .map((name) => [name.toLowerCase(), name] as const),
+    ).values(),
+  ].filter((name) => !fields.some((f) => f.toLowerCase() === name.toLowerCase()));
+  const addSuggested = (name: string) => {
+    if (fields.length >= MAX_FIELDS || fields.some((f) => f.toLowerCase() === name.toLowerCase())) return;
+    setAdded((list) => [...list, name]);
+    setRemoved((list) => list.filter((f) => f !== name));
+  };
   const addField = () => {
     const field = newField.trim();
     if (!field) return;
@@ -272,6 +309,8 @@ export function useTopicDraft(prefix: string) {
     newField,
     setNewField,
     addField,
+    bankSuggestions,
+    addSuggested,
     removeField: (field: string) => {
       setRemoved((list) => [...list, field]);
       setAdded((list) => list.filter((f) => f !== field));
@@ -413,7 +452,9 @@ export function IntentInput({ draft }: { draft: TopicDraft }) {
           ))}
         </RadioGroup>
         {kindInvalid && <FieldDescription>Pick the kind of answer you need.</FieldDescription>}
-        {draft.kind && draft.kind !== "explore_dataset" && <ClaimTypeHint ids={INTENT_CLAIM_TYPES[draft.kind]} />}
+        {draft.kind && draft.kind !== "explore_dataset" && (
+          <ClaimTypeHint ids={INTENT_CLAIM_TYPES[draft.kind]} framingIds={INTENT_FRAMINGS[draft.kind]} />
+        )}
       </Field>
       <Field data-invalid={intentInvalid}>
         <FieldLabel htmlFor={ids.intent}>What will you do with the result?</FieldLabel>
@@ -497,7 +538,7 @@ export function CaseDetailsInput({ draft }: { draft: TopicDraft }) {
 
 export function FieldsInput({ draft }: { draft: TopicDraft }) {
   const id = draft.ids.field;
-  const { fields, newField, setNewField, addField, removeField } = draft;
+  const { fields, newField, setNewField, addField, removeField, bankSuggestions, addSuggested } = draft;
   return (
     <Field>
       <FieldLabel htmlFor={id}>Fields</FieldLabel>
@@ -547,6 +588,24 @@ export function FieldsInput({ draft }: { draft: TopicDraft }) {
           )}
         </span>
       </div>
+      {bankSuggestions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-xs">
+          <span>Suggested from OpenAlex:</span>
+          {bankSuggestions.map((name) => (
+            <button
+              key={name}
+              type="button"
+              disabled={fields.length >= MAX_FIELDS}
+              onClick={() => addSuggested(name)}
+              aria-label={`Add ${name}`}
+              className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed px-1.5 text-foreground hover:bg-muted/60 disabled:opacity-50"
+            >
+              <Plus className="size-3" />
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
       <FieldDescription>
         {fields.length
           ? "Suggested from your topic. They decide which skills and sources the agents use."
