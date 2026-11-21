@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** The agents of the hypothesis stage that can each use their own model. */
-export const LLM_ROLES = ["theorist", "methodologist", "skeptic", "judge", "reviewer"] as const;
+export const LLM_ROLES = ["theorist", "methodologist", "skeptic", "judge"] as const;
 export type LlmRole = (typeof LLM_ROLES)[number];
 export type RoleModels = Partial<Record<LlmRole, string>>;
 

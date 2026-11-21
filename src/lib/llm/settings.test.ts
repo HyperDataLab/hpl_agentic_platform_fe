@@ -112,3 +112,22 @@ describe("language model settings", () => {
     expect(getLlmSettings()).toEqual(defaultLlmSettings());
   });
 });
+
+describe("roles the engine does not accept", () => {
+  it("never sends a reviewer model, and still loads settings saved with one", () => {
+    storage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({
+        baseUrl: "https://9router.example/v1",
+        model: "cx/model",
+        roleModels: { judge: "cx/judge", reviewer: "cx/rev" },
+      }),
+    );
+    storage.setItem(KEY_KEY, "sk-secret");
+    const loaded = getLlmSettings();
+    expect(loaded.roleModels).toEqual({ judge: "cx/judge" });
+    expect(toLlmPayload(loaded).role_models).toEqual({ judge: "cx/judge" });
+    const withReviewer = { ...loaded, roleModels: { judge: "cx/judge", reviewer: "x" } } as never;
+    expect(toLlmPayload(withReviewer).role_models).toEqual({ judge: "cx/judge" });
+  });
+});

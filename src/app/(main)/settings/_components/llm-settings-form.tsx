@@ -25,8 +25,7 @@ const ROLE_LABELS: Record<LlmRole, { label: string; line: string }> = {
   theorist: { label: "Theorist", line: "Drafts the hypotheses." },
   methodologist: { label: "Methodologist", line: "Says how each one could be tested." },
   skeptic: { label: "Skeptic", line: "Argues against them in the debate." },
-  judge: { label: "Judge", line: "Scores the debate and picks the survivors." },
-  reviewer: { label: "Reviewer", line: "Reviews the final set before it is shown." },
+  judge: { label: "Judge", line: "Scores the debate, picks the survivors and reviews the final set." },
 };
 
 /**
