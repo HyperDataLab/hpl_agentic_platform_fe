@@ -40,7 +40,7 @@ export interface CreateRunRequest {
     base_url: string;
     api_key: string;
     model: string;
-    role_models?: Partial<Record<"theorist" | "methodologist" | "skeptic" | "judge" | "reviewer", string>>;
+    role_models?: Partial<Record<"theorist" | "methodologist" | "skeptic" | "judge", string>>;
   };
   sources?: RunSources;
 }
