@@ -14,3 +14,11 @@ export function getPaperLabUrl() {
     process.env.NEXT_PUBLIC_PAPERLAB_WORKER_URL || "https://paperlab-pdf-worker.hyperdatalab.workers.dev"
   ).replace(/\/+$/, "");
 }
+
+/** The Writing Bank's read-only API, which names and defines the claim types shown as hints. */
+export function getWritingBankUrl() {
+  return (process.env.NEXT_PUBLIC_WRITING_BANK_URL || "https://writingbank-worker.hyperdatalab.workers.dev").replace(
+    /\/+$/,
+    "",
+  );
+}

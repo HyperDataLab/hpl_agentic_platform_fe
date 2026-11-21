@@ -27,6 +27,7 @@ import type { GateKind, IntentKind, ReviewMode, RunInput } from "@/lib/run-strea
 import { SHOW_DATA_STAGE, SHOW_REVIEW_MODE } from "@/lib/run-stream/features";
 import { DATASET } from "@/lib/run-stream/mock/scenario";
 
+import { ClaimTypeHint } from "./claim-type-hint";
 import { MODES, PIPELINE, RUN_MODES, STAGE_SHORT, STOP_INFO, stopsFor } from "./run-meta";
 import { LlmKeyNotice, SourcesInput, useRunSources } from "./run-sources";
 
@@ -67,6 +68,13 @@ export const INTENTS: { kind: Exclude<IntentKind, "explore_dataset">; label: str
   { kind: "compare", label: "Compare", line: "Compare methods, conditions or groups." },
   { kind: "explain", label: "Explain", line: "Find what explains an outcome." },
 ];
+
+/** The Writing Bank claim types related to each kind of run, shown as a hint under the chosen card. */
+export const INTENT_CLAIM_TYPES: Record<(typeof INTENTS)[number]["kind"], readonly string[]> = {
+  test: ["ct.causal", "ct.correlational", "ct.predictive", "ct.generalisation"],
+  compare: ["ct.comparative", "ct.methodological"],
+  explain: ["ct.mechanistic", "ct.causal"],
+};
 
 const lines = (text: string) =>
   text
@@ -354,7 +362,7 @@ export function TopicInput({
         onChange={(e) => draft.setTopic(e.target.value)}
         maxLength={MAX_TOPIC}
         aria-invalid={invalid}
-        placeholder="One question you want answered, such as: does more sleep go with higher exam scores in our undergraduates?"
+        placeholder="One question you want answered, such as: does staleness-aware aggregation speed up convergence in asynchronous federated learning?"
         className="font-(family-name:--font-lora) min-h-24 text-[17px] text-foreground leading-snug md:text-[17px]"
         autoFocus={autoFocus}
       />
@@ -405,6 +413,7 @@ export function IntentInput({ draft }: { draft: TopicDraft }) {
           ))}
         </RadioGroup>
         {kindInvalid && <FieldDescription>Pick the kind of answer you need.</FieldDescription>}
+        {draft.kind && draft.kind !== "explore_dataset" && <ClaimTypeHint ids={INTENT_CLAIM_TYPES[draft.kind]} />}
       </Field>
       <Field data-invalid={intentInvalid}>
         <FieldLabel htmlFor={ids.intent}>What will you do with the result?</FieldLabel>
@@ -414,7 +423,7 @@ export function IntentInput({ draft }: { draft: TopicDraft }) {
           onChange={(e) => draft.setIntent(e.target.value)}
           maxLength={MAX_TOPIC}
           aria-invalid={intentInvalid}
-          placeholder="Decide what sleep advice to give first-year students"
+          placeholder="Decide which aggregation rule to use in our asynchronous FL testbed"
           className="text-foreground"
         />
         <Hint need={lengthHint(draft.intent, MIN_INTENT)}>
@@ -476,7 +485,7 @@ export function CaseDetailsInput({ draft }: { draft: TopicDraft }) {
             id={`${id}-references`}
             value={draft.references}
             onChange={(e) => draft.setReferences(e.target.value)}
-            placeholder={"One per line: a DOI, a URL or a title, for example:\n10.1093/sleep/zsy171"}
+            placeholder={"One per line: a DOI, a URL or a title, for example:\nhttps://arxiv.org/abs/1602.05629"}
             className="min-h-20 bg-background"
           />
           <FieldDescription>The literature search starts from them. One per line.</FieldDescription>

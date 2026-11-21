@@ -55,7 +55,7 @@
           },
           {
             "key": "Content-Security-Policy",
-            "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com; frame-src https://hyperdatalab-idea2hypo.firebaseapp.com https://accounts.google.com http://127.0.0.1:9099 http://localhost:9099; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://i2h-worker.hyperdatalab.workers.dev https://paperlab-pdf-worker.hyperdatalab.workers.dev https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://9router.oraltest.site http://localhost:8787 http://127.0.0.1:9099 http://localhost:9099; img-src 'self' data: blob: https://lh3.googleusercontent.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+            "value": "default-src 'self'; script-src 'self' 'unsafe-inline' https://apis.google.com; frame-src https://hyperdatalab-idea2hypo.firebaseapp.com https://accounts.google.com http://127.0.0.1:9099 http://localhost:9099; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://i2h-worker.hyperdatalab.workers.dev https://writingbank-worker.hyperdatalab.workers.dev https://paperlab-pdf-worker.hyperdatalab.workers.dev https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://9router.oraltest.site http://localhost:8787 http://127.0.0.1:9099 http://localhost:9099; img-src 'self' data: blob: https://lh3.googleusercontent.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
           }
         ]
       },
